@@ -1,19 +1,30 @@
+// modules
 const express = require("express");
+const path = require("path");
+const dotenv = require("dotenv");
+const connectDB = require("./config/database");
 const cors = require("cors");
 
-// using app
-const app = express();
-
+dotenv.config();
+connectDB();
+const userRoutes = require("./routes/userRoutes");
 // middlewares
-app.use(cors());
+const app = express();
+// builtins
 app.use(express.json());
 
-// routes
+// FrontEnd - BackEnd
+app.use(
+  cors({
+    origin: [process.env.FRONTEND_URL1, process.env.FRONTEND_URL2],
+    credentials: true,
+  }),
+);
 
-// ports
-const PORT = process.env.PORT || 5000;
+// user defined
+app.use("/user", userRoutes);
 
-// server
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log("SERVER STARTED ON PORT:", PORT);
+  console.log("App started on PORT:", PORT);
 });
