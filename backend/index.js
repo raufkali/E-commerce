@@ -8,6 +8,7 @@ const cors = require("cors");
 dotenv.config();
 connectDB();
 const userRoutes = require("./routes/userRoutes");
+const authRoutes = require("./routes/authRoutes");
 // middlewares
 const app = express();
 // builtins
@@ -23,7 +24,7 @@ app.use(
 
 // user defined
 app.use("/user", userRoutes);
-
+app.use("/auth", authRoutes);
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log("App started on PORT:", PORT);

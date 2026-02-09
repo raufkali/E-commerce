@@ -32,6 +32,7 @@ const createUser = async (req, res) => {
       { expiresIn: "7d" },
     );
     res.status(201).json({
+      status: "success",
       message: "User created successfully",
       token,
       user: { id: user._id, email: user.email, role: user.role },

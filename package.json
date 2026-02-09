@@ -7,7 +7,9 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "startB": "cd backend && nodemon index.js",
+    "startF": "cd frontend && npm run dev",
+    "start": "start cmd /k \"npm run startB\" & start cmd /k \"npm run startF\""
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -19,6 +21,7 @@
     "express-validator": "^7.3.0",
     "joi": "^18.0.1",
     "jsonwebtoken": "^9.0.2",
+    "jwt-decode": "^4.0.0",
     "mongoose": "^8.22.0",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.10",
