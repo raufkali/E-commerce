@@ -2,10 +2,28 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+const getAllUsers = async (req, res, next) => {
+  try {
+    const allUsers = await User.find();
+    res
+      .status(200)
+      .json({ message: "Successfull!", body: { users: allUsers } });
+  } catch (error) {
+    res.status(400).json({ message: "ERROR! While fetching users" });
+  }
+};
+
 const createUser = async (req, res) => {
   try {
     const data = req.body;
-
+    if (req.user && req.user.role == "admin") {
+      var allowedRoles = ["user", "seller", "admin"];
+    } else {
+      var allowedRoles = ["user", "seller"];
+    }
+    if (!allowedRoles.includes(data.role)) {
+      return res.status(403).json({ message: "Access Denied!" });
+    }
     if (!data.email || !data.password) {
       return res
         .status(400)
@@ -74,4 +92,4 @@ const loginUser = async (req, res) => {
   }
 };
 
-module.exports = { createUser, loginUser };
+module.exports = { createUser, loginUser, getAllUsers };

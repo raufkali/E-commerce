@@ -19,13 +19,13 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ message: "Token invalid or expired" });
   }
 };
-const roleMiddleware = (...allowedRoles) => {
+const verifyRole = (...allowedRoles) => {
   return (req, res, next) => {
-    if (!allowedRoles.includes(req.user.role)) {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ message: "Access denied" });
     }
     next();
   };
 };
 
-module.exports = { roleMiddleware, authMiddleware };
+module.exports = { verifyRole, authMiddleware };

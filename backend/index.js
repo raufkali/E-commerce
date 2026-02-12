@@ -9,6 +9,8 @@ dotenv.config();
 connectDB();
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+
 // middlewares
 const app = express();
 // builtins
@@ -25,6 +27,8 @@ app.use(
 // user defined
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
+app.use("/admin", adminRoutes);
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log("App started on PORT:", PORT);
