@@ -1,4 +1,3 @@
-const { ResultWithContextImpl } = require("express-validator/lib/chain");
 const jwt = require("jsonwebtoken");
 
 const authMiddleware = (req, res, next) => {
