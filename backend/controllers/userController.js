@@ -1,95 +1,104 @@
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const asyncHandler = require("express-async-handler");
 
-const getAllUsers = async (req, res, next) => {
-  try {
-    const allUsers = await User.find();
-    res
-      .status(200)
-      .json({ message: "Successfull!", body: { users: allUsers } });
-  } catch (error) {
-    res.status(400).json({ message: "ERROR! While fetching users" });
+// GET ALL USERS
+const getAllUsers = asyncHandler(async (req, res) => {
+  const allUsers = await User.find();
+  res.status(200).json({
+    message: "Success! Users fetched",
+    users: allUsers,
+  });
+});
+
+// CREATE USER
+const createUser = asyncHandler(async (req, res) => {
+  const data = req.body;
+
+  // determine allowed roles
+  let allowedRoles = ["user", "seller"];
+  if (req.user && req.user.role === "admin") {
+    allowedRoles.push("admin");
   }
-};
 
-const createUser = async (req, res) => {
-  try {
-    const data = req.body;
-    if (req.user && req.user.role == "admin") {
-      var allowedRoles = ["user", "seller", "admin"];
-    } else {
-      var allowedRoles = ["user", "seller"];
-    }
-    if (!allowedRoles.includes(data.role)) {
-      return res.status(403).json({ message: "Access Denied!" });
-    }
-    if (!data.email || !data.password) {
-      return res
-        .status(400)
-        .json({ message: "Email and password are required" });
-    }
-
-    const existingUser = await User.findOne({ email: data.email });
-    if (existingUser) {
-      return res.status(409).json({ message: "User already exists" });
-    }
-
-    const hashedPass = await bcrypt.hash(data.password, 10);
-    data.password = hashedPass;
-
-    const user = await User.create(data);
-    // granting access
-    const token = jwt.sign(
-      {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" },
-    );
-    res.status(201).json({
-      status: "success",
-      message: "User created successfully",
-      token,
-      user: { id: user._id, email: user.email, role: user.role },
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error" });
+  if (!allowedRoles.includes(data.role)) {
+    res.status(403);
+    throw new Error("Access Denied: Invalid Role");
   }
-};
 
-// just login the user
-const loginUser = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    // checking for exsisting email
-    const exsisted = await User.findOne({ email });
-    if (!exsisted) {
-      return res.status(404).send("User Not Found!");
-    }
-    // if found what to do
-    const isValidUser = await bcrypt.compare(password, exsisted.password);
-    if (isValidUser) {
-      const token = jwt.sign(
-        {
-          id: exsisted._id,
-          email,
-          role: exsisted.role,
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: "7d" },
-      );
-      res.status(200).json({
-        message: "User Login Successfully!",
-        token,
-      });
-    }
-  } catch (error) {
-    return res.status(400).send("Something went wrong while Login User!");
+  if (!data.email || !data.password) {
+    res.status(400);
+    throw new Error("Email and password are required");
   }
-};
+
+  const existingUser = await User.findOne({ email: data.email });
+  if (existingUser) {
+    res.status(409);
+    throw new Error("User already exists");
+  }
+
+  // hash password
+  const hashedPass = await bcrypt.hash(data.password, 10);
+  data.password = hashedPass;
+
+  const user = await User.create(data);
+
+  // generate JWT
+  const token = jwt.sign(
+    {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+
+  res.status(201).json({
+    status: "success",
+    message: "User created successfully",
+    token,
+    user: { id: user._id, email: user.email, role: user.role },
+  });
+});
+
+// LOGIN USER
+const loginUser = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    res.status(400);
+    throw new Error("Email and password are required");
+  }
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  const isValidUser = await bcrypt.compare(password, user.password);
+  if (!isValidUser) {
+    res.status(401);
+    throw new Error("Invalid credentials");
+  }
+
+  const token = jwt.sign(
+    {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+
+  res.status(200).json({
+    message: "User logged in successfully",
+    token,
+    user: { id: user._id, email: user.email, role: user.role },
+  });
+});
 
 module.exports = { createUser, loginUser, getAllUsers };

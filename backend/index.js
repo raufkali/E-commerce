@@ -4,6 +4,7 @@ const path = require("path");
 const dotenv = require("dotenv");
 const connectDB = require("./config/database");
 const cors = require("cors");
+const errorHandler = require("./middlewares/errorHandler");
 
 dotenv.config();
 connectDB();
@@ -18,6 +19,7 @@ const productRoutes = require("./routes/productRoutes");
 const app = express();
 // builtins
 app.use(express.json());
+// my defined
 
 // FrontEnd - BackEnd
 app.use(
@@ -32,6 +34,8 @@ app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/products", productRoutes);
+
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 8080;
 // Server

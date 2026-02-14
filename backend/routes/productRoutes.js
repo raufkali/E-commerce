@@ -8,7 +8,6 @@ const {
   updateProduct,
 } = require("../controllers/productController");
 const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
-
 router.get("/", getAllProducts);
 
 router.post("/create", authMiddleware, verifyRole("seller"), createProduct);
