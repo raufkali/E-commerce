@@ -17,4 +17,4 @@ router.put("/remove/:id", authMiddleware, verifyRole("user"), removeFromCart);
 router.put("/removeAll", authMiddleware, verifyRole("user"), emptyCart);
 router.put("/update/:id", authMiddleware, verifyRole("user"), updateCartItem);
 
-module.export = router;
+module.exports = router;

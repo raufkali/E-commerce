@@ -35,6 +35,7 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
+
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 8080;
