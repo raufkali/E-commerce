@@ -14,7 +14,7 @@ const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const productRoutes = require("./routes/productRoutes");
-
+const cartRoutes = require("./routes/cartRoutes");
 // middlewares
 const app = express();
 // builtins
@@ -34,7 +34,7 @@ app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/products", productRoutes);
-
+app.use("/cart", cartRoutes);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 8080;
