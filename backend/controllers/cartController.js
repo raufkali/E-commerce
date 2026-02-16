@@ -122,7 +122,51 @@ const emptyCart = asyncHandler(async (req, res) => {
   });
 });
 
-const updateCartItem = asyncHandler(async (req, res) => {});
+const updateCartItem = asyncHandler(async (req, res) => {
+  if (!req.params.id) {
+    res.status(400);
+    throw new Error("ID not available");
+  }
+  const { quantity } = req.body;
+
+  if (!quantity || quantity <= 0) {
+    res.status(400);
+    throw new Error("Invalid Quantity");
+  }
+  // check for the product
+  const product = await Product.findById(req.params.id);
+
+  if (!product) throw new Error("Product not found");
+
+  if (quantity > product.stock) throw new Error("Not enough stock");
+
+  // get the cart
+  const cart = await Cart.findOne({ user: req.user.id });
+  if (!cart) {
+    res.status(401);
+    throw new Error("Cart not found");
+  }
+  // check for the product in the cart
+  const index = cart.items.findIndex(
+    (item) => item.product.toString() == req.params.id,
+  );
+  if (index == -1) {
+    res.status(404);
+    throw new Error("Product not Found in the cart");
+  }
+  // update the product quantity and recalculate total Price
+  cart.items[index].quantity = quantity;
+  const totalPrice = cart.items.reduce(
+    (total, item) => total + item.price * item.quantity,
+    0,
+  );
+  cart.totalPrice = totalPrice;
+  await cart.save();
+  res.status(200).json({
+    status: "Success!",
+    cart,
+  });
+});
 
 module.exports = {
   addToCart,
