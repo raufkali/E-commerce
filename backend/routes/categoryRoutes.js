@@ -14,7 +14,12 @@ router.post("/create", authMiddleware, verifyRole("admin"), createCategory);
 router.get("/", getAllCategories);
 router.get("/:id", getOneCategory);
 router.put("/update/:id", authMiddleware, verifyRole("admin"), updateCategory);
-router.put("/delete/:id", authMiddleware, verifyRole("admin"), deleteCategory);
+router.delete(
+  "/delete/:id",
+  authMiddleware,
+  verifyRole("admin"),
+  deleteCategory,
+);
 router.get("/:id/products", getProductByCategory);
 
 module.exports = router;

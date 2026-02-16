@@ -1,5 +1,7 @@
 const Category = require("../models/Category");
 const asyncHandler = require("express-async-handler");
+const Product = require("../models/Product");
+const mongoose = require("mongoose");
 
 const createCategory = asyncHandler(async (req, res) => {
   const { name, description, isActive } = req.body;
@@ -26,15 +28,105 @@ const createCategory = asyncHandler(async (req, res) => {
   });
 });
 
-const getOneCategory = asyncHandler(async (req, res) => {});
+const getOneCategory = asyncHandler(async (req, res) => {
+  const { id } = req.params;
 
-const getAllCategories = asyncHandler(async (req, res) => {});
+  if (!id) {
+    res.status(400);
+    throw new Error("Category ID is required");
+  }
 
-const updateCategory = asyncHandler(async (req, res) => {});
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    throw new Error("Invalid Category ID");
+  }
 
-const deleteCategory = asyncHandler(async (req, res) => {});
+  const category = await Category.findById(id);
 
-const getProductByCategory = asyncHandler(async (req, res) => {});
+  if (!category) {
+    res.status(404);
+    throw new Error("Category not found");
+  }
+
+  res.status(200).json({
+    status: "Success",
+    category,
+  });
+});
+
+const getAllCategories = asyncHandler(async (req, res) => {
+  const categories = await Category.find();
+
+  res.status(200).json({
+    status: "Success",
+    count: categories.length,
+    categories,
+  });
+});
+
+const updateCategory = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    throw new Error("Invalid Category ID");
+  }
+
+  const category = await Category.findById(id);
+
+  if (!category) {
+    res.status(404);
+    throw new Error("Category not found");
+  }
+
+  const updatedCategory = await Category.findByIdAndUpdate(id, req.body, {
+    new: true,
+    runValidators: true,
+  });
+
+  res.status(200).json({
+    status: "Success",
+    message: "Category Updated",
+    category: updatedCategory,
+  });
+});
+
+const deleteCategory = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    throw new Error("Invalid Category ID");
+  }
+
+  const category = await Category.findByIdAndDelete(id);
+
+  if (!category) {
+    res.status(404);
+    throw new Error("Category not found");
+  }
+  res.status(200).json({
+    status: "Success",
+    message: "Category Deleted",
+  });
+});
+
+const getProductByCategory = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    throw new Error("Invalid Category ID");
+  }
+
+  const products = await Product.find({ category: id }).populate("category");
+
+  res.status(200).json({
+    status: "Success",
+    count: products.length,
+    products,
+  });
+});
 
 module.exports = {
   createCategory,
