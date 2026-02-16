@@ -23,9 +23,9 @@ const productSchema = new mongoose.Schema(
       min: 0,
     },
     category: {
-      type: String,
+      type: mongoose.Types.ObjectId,
       required: true,
-      trim: true,
+      ref: "Category",
     },
     discount: {
       type: Number,

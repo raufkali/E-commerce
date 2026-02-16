@@ -15,6 +15,8 @@ const authRoutes = require("./routes/authRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const productRoutes = require("./routes/productRoutes");
 const cartRoutes = require("./routes/cartRoutes");
+const categoryRoutes = require("./routes/categoryRoutes");
+
 // middlewares
 const app = express();
 // builtins
@@ -35,6 +37,7 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
+app.use("/category", categoryRoutes);
 
 app.use(errorHandler);
 
