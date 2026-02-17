@@ -15,8 +15,6 @@ const addToCart = asyncHandler(async (req, res) => {
     // create one
     userCart = await Cart.create({
       user: req.user.id,
-      items: [],
-      totalPrice: 0,
     });
   }
   // check if the product exsists and the quantity remains
@@ -39,14 +37,10 @@ const addToCart = asyncHandler(async (req, res) => {
     userCart.items.push({
       product: productId,
       quantity,
-      price: product.price,
+      price: product.finalPrice,
     });
   }
-  // recalculate the total price
-  userCart.totalPrice = userCart.items.reduce(
-    (total, item) => total + item.price * item.quantity,
-    0,
-  );
+
   const savedCart = await userCart.save();
   res.status(201).json({
     status: "Success!",
@@ -89,18 +83,14 @@ const removeFromCart = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Product is not in the cart");
   }
-  const productPrice =
-    myCart.items[itemIndex].price * myCart.items[itemIndex].quantity;
   // remove from cart
   myCart.items.splice(itemIndex, 1);
-  myCart.totalPrice -= productPrice;
   await myCart.save();
   res.status(200).json({
     success: true,
     message: "Product removed from cart",
     cart: myCart,
   });
-  // reduce total Price
 });
 
 const emptyCart = asyncHandler(async (req, res) => {
@@ -114,7 +104,6 @@ const emptyCart = asyncHandler(async (req, res) => {
     throw new Error("Cart for this user not Found!");
   }
   myCart.items = [];
-  myCart.totalPrice = 0;
   await myCart.save();
   res.status(201).json({
     status: "success",
@@ -156,11 +145,7 @@ const updateCartItem = asyncHandler(async (req, res) => {
   }
   // update the product quantity and recalculate total Price
   cart.items[index].quantity = quantity;
-  const totalPrice = cart.items.reduce(
-    (total, item) => total + item.price * item.quantity,
-    0,
-  );
-  cart.totalPrice = totalPrice;
+
   await cart.save();
   res.status(200).json({
     status: "Success!",
