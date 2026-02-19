@@ -22,12 +22,7 @@ router.put(
 router.get("/my-orders", authMiddleware, verifyRole("buyer"), getMyOrders);
 
 // Seller Routes
-router.put(
-  "/update/:id",
-  authMiddleware,
-  verifyRole("seller", "admin"),
-  updateOrderStatus,
-);
+router.put("/update", authMiddleware, verifyRole("seller"), updateOrderStatus);
 router.get("/seller", authMiddleware, verifyRole("seller"), getSellerOrders);
 
 // Admin routes

@@ -23,7 +23,18 @@ const orderItemSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
-
+    orderStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "confirmed",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+      ],
+      default: "pending",
+    },
     quantity: {
       type: Number,
       required: true,
@@ -74,19 +85,6 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
 
-    orderStatus: {
-      type: String,
-      enum: [
-        "pending",
-        "confirmed",
-        "processing",
-        "shipped",
-        "delivered",
-        "cancelled",
-      ],
-      default: "pending",
-    },
-
     itemsPrice: {
       type: Number,
       required: true,
@@ -121,6 +119,10 @@ const orderSchema = new mongoose.Schema(
     isDelivered: {
       type: Boolean,
       default: false,
+    },
+    isCancelled: {
+      type: Boolean
+      default: false
     },
 
     deliveredAt: Date,
