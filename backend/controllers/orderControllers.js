@@ -66,6 +66,7 @@ const createOrder = asyncHandler(async (req, res) => {
     shippingPrice,
     taxPrice,
     totalPrice,
+    paymentStatus: "pending",
   });
   //   clear cart
   cart.items = [];

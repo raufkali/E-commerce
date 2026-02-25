@@ -75,8 +75,8 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: {
       type: String,
       required: true,
-      enum: ["COD", "Stripe", "JazzCash", "EasyPaisa"],
-      default: "COD",
+      enum: ["stripe"],
+      default: "stripe",
     },
 
     paymentStatus: {
@@ -121,8 +121,8 @@ const orderSchema = new mongoose.Schema(
       default: false,
     },
     isCancelled: {
-      type: Boolean
-      default: false
+      type: Boolean,
+      default: false,
     },
 
     deliveredAt: Date,

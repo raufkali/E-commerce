@@ -17,12 +17,10 @@ const productRoutes = require("./routes/productRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const orderRoutes = require("./routes/orderRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
 
-// middlewares
 const app = express();
-// builtins
 app.use(express.json());
-// my defined
 
 // FrontEnd - BackEnd
 app.use(
@@ -31,7 +29,6 @@ app.use(
     credentials: true,
   }),
 );
-
 // user defined
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
@@ -40,6 +37,7 @@ app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
 app.use("/category", categoryRoutes);
 app.use("/orders", orderRoutes);
+app.use("/payment", paymentRoutes);
 
 app.use(errorHandler);
 
