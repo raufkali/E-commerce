@@ -17,7 +17,7 @@ const productRoutes = require("./routes/productRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const orderRoutes = require("./routes/orderRoutes");
-const paymentRoutes = require("./routes/paymentRoutes");
+// const paymentRoutes = require("./routes/paymentRoutes");
 
 const app = express();
 app.use(express.json());
@@ -37,7 +37,7 @@ app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
 app.use("/category", categoryRoutes);
 app.use("/orders", orderRoutes);
-app.use("/payment", paymentRoutes);
+// app.use("/payment", paymentRoutes);
 
 app.use(errorHandler);
 
