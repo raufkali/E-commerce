@@ -101,4 +101,50 @@ const loginUser = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { createUser, loginUser, getAllUsers };
+const deleteUser = asyncHandler(async (req, res) => {
+  if (!req.params.id || !req.user.id) {
+    res.status(400);
+    throw new Error("Invalid Token or Invalid ID");
+  }
+  // delete the user
+  const user = await User.findByIdAndDelete(req.params.id);
+  res.status(200).json({
+    success: true,
+    user,
+  });
+});
+
+const updateUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!id || !req.user?.id) {
+    res.status(400);
+    throw new Error("Invalid Token or Invalid ID");
+  }
+  if (req.user.id !== id) {
+    res.status(403);
+    throw new Error("Not authorized to update this user");
+  }
+  const { name, email } = req.body;
+  const updatedUser = await User.findByIdAndUpdate(
+    id,
+    {
+      name,
+      email,
+    },
+    {
+      new: true,
+      runValidators: true,
+    },
+  );
+
+  if (!updatedUser) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  res.status(200).json({
+    success: true,
+    data: updatedUser,
+  });
+});
+module.exports = { createUser, loginUser, getAllUsers, deleteUser, updateUser };
