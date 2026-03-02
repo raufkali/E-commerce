@@ -15,10 +15,9 @@ const getAllUsers = asyncHandler(async (req, res) => {
 // CREATE USER
 const createUser = asyncHandler(async (req, res) => {
   const data = req.body;
-
   // determine allowed roles
   let allowedRoles = ["user", "seller"];
-  if (req.user && req.user.role === "admin") {
+  if (req.user && req.user.role == "admin") {
     allowedRoles.push("admin");
   }
 
@@ -45,22 +44,30 @@ const createUser = asyncHandler(async (req, res) => {
   const user = await User.create(data);
 
   // generate JWT
-  const token = jwt.sign(
-    {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" },
-  );
+  if (req.user && req.user.role == "admin") {
+    res.status(201).json({
+      status: "success",
+      message: "User created successfully",
+      user: { id: user._id, email: user.email, role: user.role },
+    });
+  } else {
+    const token = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" },
+    );
 
-  res.status(201).json({
-    status: "success",
-    message: "User created successfully",
-    token,
-    user: { id: user._id, email: user.email, role: user.role },
-  });
+    res.status(201).json({
+      status: "success",
+      message: "User created successfully",
+      token,
+      user: { id: user._id, email: user.email, role: user.role },
+    });
+  }
 });
 
 // LOGIN USER
@@ -115,21 +122,19 @@ const deleteUser = asyncHandler(async (req, res) => {
 });
 
 const updateUser = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const id = req.params.id;
+  console.log(id);
   if (!id || !req.user?.id) {
     res.status(400);
     throw new Error("Invalid Token or Invalid ID");
   }
-  if (req.user.id !== id) {
-    res.status(403);
-    throw new Error("Not authorized to update this user");
-  }
-  const { name, email } = req.body;
+  const { fullname, email, role } = req.body;
   const updatedUser = await User.findByIdAndUpdate(
     id,
     {
-      name,
+      fullname,
       email,
+      role,
     },
     {
       new: true,

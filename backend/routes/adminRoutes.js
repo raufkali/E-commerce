@@ -10,9 +10,10 @@ const {
 const { getAdminDashboard } = require("../controllers/adminControllers");
 
 router.get("/users", authMiddleware, verifyRole("admin"), getAllUsers);
-router.post("/create-admin", authMiddleware, createUser);
+router.post("/create-admin", authMiddleware, verifyRole("admin"), createUser);
 router.put("/update/:id", authMiddleware, verifyRole("admin"), updateUser);
-router.put("/delete/:id", authMiddleware, verifyRole("admin"), deleteUser);
+router.delete("/delete/:id", authMiddleware, verifyRole("admin"), deleteUser);
+
 router.get(
   "/dashboard",
   authMiddleware,
