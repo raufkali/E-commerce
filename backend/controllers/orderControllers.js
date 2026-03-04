@@ -110,13 +110,26 @@ const getOrderById = asyncHandler(async (req, res) => {
 });
 
 const getAllOrders = asyncHandler(async (req, res) => {
-  const orders = await Order.find();
+  const orders = await Order.find()
+    .populate({
+      path: "user",
+      select: "name email role",
+    })
+    .populate({
+      path: "orderItems.product",
+      select: "name price images",
+    })
+    .populate({
+      path: "orderItems.seller",
+      select: "name email",
+    })
+    .sort({ createdAt: -1 });
+
   res.status(200).json({
     success: true,
     orders,
   });
 });
-
 const updateOrderStatus = asyncHandler(async (req, res) => {
   const { orderId, productId, orderStatus } = req.body;
 
