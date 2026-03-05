@@ -11,15 +11,15 @@ const {
 } = require("../controllers/orderControllers");
 const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
 
-// Buyer routes
-router.post("/create", authMiddleware, verifyRole("buyer"), createOrder);
+// User routes
+router.post("/create", authMiddleware, verifyRole("user"), createOrder);
 router.put(
   "/cancel/:id",
   authMiddleware,
-  verifyRole("buyer, admin"),
+  verifyRole("user", "admin"),
   cancelOrder,
 );
-router.get("/my-orders", authMiddleware, verifyRole("buyer"), getMyOrders);
+router.get("/my-orders", authMiddleware, verifyRole("user"), getMyOrders);
 
 // Seller Routes
 router.put("/update", authMiddleware, verifyRole("seller"), updateOrderStatus);

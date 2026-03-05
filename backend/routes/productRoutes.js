@@ -9,10 +9,21 @@ const {
   getMyProducts,
 } = require("../controllers/productController");
 const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
+const { uploadMultipleProducts } = require("../middlewares/uploadMiddleware");
+
 router.get("/", getAllProducts);
 
-router.post("/create", authMiddleware, verifyRole("seller"), createProduct);
+// IMPORTANT: Order matters - multer must run before controller
+router.post(
+  "/create",
+  authMiddleware,
+  verifyRole("seller"),
+  uploadMultipleProducts, // This processes multipart/form-data
+  createProduct,
+);
+
 router.get("/my-products", authMiddleware, verifyRole("seller"), getMyProducts);
+
 router
   .route("/:id")
   .delete(authMiddleware, verifyRole("admin", "seller"), deleteProduct)

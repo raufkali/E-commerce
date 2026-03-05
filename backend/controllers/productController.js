@@ -13,17 +13,11 @@ const getAllProducts = asyncHandler(async (req, res) => {
 });
 
 const createProduct = asyncHandler(async (req, res) => {
-  const {
-    name,
-    description,
-    price,
-    category,
-    discount,
-    stock,
-    images,
-    isActive,
-  } = req.body;
-
+  const { name, description, price, category, discount, stock, isActive } =
+    req.body;
+  console.log("req.body:", req.body);
+  console.log("req.files:", req.files);
+  console.log("req.user:", req.user);
   //   validation
   if (!name || !description || price == null || !category) {
     res.status(400);
@@ -36,46 +30,46 @@ const createProduct = asyncHandler(async (req, res) => {
   const sellerId = req.user.id;
   const productName = name.toLowerCase();
   //   checking for the same product
-  const exsisted = await Product.findOne({
+  const existed = await Product.findOne({
     name: productName,
     sellerId,
     category,
   });
-  if (exsisted) {
+  if (existed) {
     res.status(409);
-    throw new Error("ERROR! Product Already Exsists");
+    throw new Error("ERROR! Product Already Exists");
   }
 
-  // checking if the category exsists
-  const exsistedCateg = await Category.findById(category);
-  if (!exsistedCateg) {
+  // checking if the category exists
+  const existedCateg = await Category.findById(category);
+  if (!existedCateg) {
     res.status(400);
-    throw new Error("This category doesn't exsists");
+    throw new Error("This category doesn't exist");
   }
+
+  // Handle image paths from uploaded files
   let imagePaths = [];
   if (req.files && req.files.length > 0) {
     // Multiple files uploaded
     imagePaths = req.files.map((file) => `/uploads/products/${file.filename}`);
-  } else if (req.file) {
-    // Single file uploaded
-    imagePaths = [`/uploads/products/${req.file.filename}`];
   }
+
   const newProduct = await Product.create({
     name: name.toLowerCase(),
     description,
     price,
     category,
-    discount,
-    stock,
-    images: images || [],
+    discount: discount || 0,
+    stock: stock || 0,
+    images: imagePaths,
     sellerId,
-    isActive,
+    isActive: isActive !== undefined ? isActive : true,
   });
+
   res.status(201).json({
     message: "Success! Product Created",
-    body: {
-      newProduct,
-    },
+    success: true,
+    product: newProduct,
   });
 });
 

@@ -27,6 +27,7 @@ const orderRoutes = require("./routes/orderRoutes");
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Make upload middleware available throughout the app
 app.locals.upload = {
@@ -50,7 +51,6 @@ app.use(
 
 // Serve static files from public directory
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
-
 // user defined routes
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);

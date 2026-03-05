@@ -25,30 +25,41 @@ const createOrder = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error("Product not found");
     }
-    //   stock validation
+
+    // stock validation
     if (product.stock < item.quantity) {
       res.status(400);
       throw new Error(
         `${product.name} has only ${product.stock} left in stock`,
       );
     }
-    //   recalculating price
+
+    // recalculating price
     const price = product.price;
-
     const subtotal = price * item.quantity;
-
     itemPrice += subtotal;
+
+    // FIX: Make sure seller is properly set
+    // product.sellerId is the field in your Product model (check your Product schema)
+    const sellerId = product.sellerId || product.seller; // Try both possible field names
+
+    if (!sellerId) {
+      res.status(400);
+      throw new Error(`Product ${product.name} has no seller assigned`);
+    }
+
     const orderStatus = "pending";
     orderItems.push({
       product: product._id,
-      seller: product.seller,
+      seller: sellerId, // This is required by your schema
       name: product.name,
-      image: product.image,
+      image: product.images && product.images[0] ? product.images[0] : null,
       price,
       quantity: item.quantity,
       orderStatus,
     });
-    //   reducing stock
+
+    // reducing stock
     product.stock -= item.quantity;
     await product.save();
   }
@@ -62,16 +73,17 @@ const createOrder = asyncHandler(async (req, res) => {
     orderItems,
     shippingAddress,
     paymentMethod,
-    itemPrice,
+    itemsPrice: itemPrice,
     shippingPrice,
     taxPrice,
     totalPrice,
     paymentStatus: "pending",
   });
-  //   clear cart
-  cart.items = [];
 
+  // clear cart
+  cart.items = [];
   await cart.save();
+
   res.status(201).json({
     success: true,
     message: "Order created successfully",
