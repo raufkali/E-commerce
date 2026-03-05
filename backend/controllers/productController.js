@@ -52,7 +52,14 @@ const createProduct = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("This category doesn't exsists");
   }
-
+  let imagePaths = [];
+  if (req.files && req.files.length > 0) {
+    // Multiple files uploaded
+    imagePaths = req.files.map((file) => `/uploads/products/${file.filename}`);
+  } else if (req.file) {
+    // Single file uploaded
+    imagePaths = [`/uploads/products/${req.file.filename}`];
+  }
   const newProduct = await Product.create({
     name: name.toLowerCase(),
     description,
