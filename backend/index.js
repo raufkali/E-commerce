@@ -1,6 +1,7 @@
 const express = require("express");
 const path = require("path");
 const dotenv = require("dotenv");
+
 const connectDB = require("./config/database");
 const cors = require("cors");
 const errorHandler = require("./middlewares/errorHandler");
@@ -23,7 +24,8 @@ const productRoutes = require("./routes/productRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const orderRoutes = require("./routes/orderRoutes");
-// const paymentRoutes = require("./routes/paymentRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const webhook = require("./routes/webhook");
 
 const app = express();
 app.use(express.json());
@@ -59,8 +61,8 @@ app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
 app.use("/category", categoryRoutes);
 app.use("/orders", orderRoutes);
-
-// app.use("/payment", paymentRoutes);
+app.use("/payment", paymentRoutes);
+app.use("/webhook", webhook);
 
 // Error handling middleware
 app.use(errorHandler);

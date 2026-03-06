@@ -1,9 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const { createPaymentSession } = require("../controllers/paymentController");
-const { protect } = require("../middleware/authMiddleware"); // your auth middleware
+const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
 
 // Create Stripe payment session
-router.post("/:id/session", protect, createPaymentSession);
+router.post(
+  "/create-payment-intent",
+  authMiddleware,
+  verifyRole("user"),
+  createPaymentSession,
+);
 
 module.exports = router;

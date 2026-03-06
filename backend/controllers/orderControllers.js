@@ -78,6 +78,7 @@ const createOrder = asyncHandler(async (req, res) => {
     taxPrice,
     totalPrice,
     paymentStatus: "pending",
+    escrowStatus: "held",
   });
 
   // clear cart

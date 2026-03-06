@@ -1,51 +1,42 @@
-const Payment = require("../models/Payment");
+const expressAsyncHandler = require("express-async-handler");
+const stripe = require("../config/stripe");
 const Order = require("../models/Order");
-const asyncHandler = require("express-async-handler");
-const Stripe = require("stripe");
 
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const createPaymentSession = expressAsyncHandler(async (req, res) => {
+  const { orderId } = req.body; // You don't need amount, get it from order
 
-const createPaymentSession = asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id);
+  // Find the order in database
+  const order = await Order.findById(orderId);
 
   if (!order) {
     res.status(404);
     throw new Error("Order not found");
   }
 
-  if (order.paymentStatus === "paid") {
-    res.status(400);
-    throw new Error("Order already paid");
-  }
-
-  // Create Payment record in DB
-  const payment = await Payment.create({
-    order: order._id,
-    user: req.user._id,
-    amount: order.totalPrice,
-    status: "pending",
-    gateway: "stripe",
-  });
-
-  // Create Stripe PaymentIntent
+  // Create payment intent with order total
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: order.totalPrice, // convert to smallest currency unit (e.g., PKR * 100)
+    amount: Math.round(order.totalPrice * 100), // Convert to cents
     currency: "usd",
-    payment_method_types: ["card"],
+    capture_method: "manual", // Hold funds in escrow
     metadata: {
       orderId: order._id.toString(),
-      paymentId: payment._id.toString(),
+      userId: req.user.id,
     },
   });
 
-  // Save Stripe PaymentIntent ID as transactionId
-  payment.transactionId = paymentIntent.id;
-  await payment.save();
+  // Update the SPECIFIC order (not the model)
+  order.stripePaymentIntentId = paymentIntent.id;
+  order.stripeClientSecret = paymentIntent.client_secret;
+  order.paymentStatus = "requires_payment_method";
 
-  // Send client secret to frontend for payment confirmation
-  res.json({
+  // Save the updated order
+  await order.save();
+
+  // Send response back to frontend
+  res.status(200).json({
     success: true,
     clientSecret: paymentIntent.client_secret,
+    paymentIntentId: paymentIntent.id,
   });
 });
 
