@@ -325,6 +325,9 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
 // @desc    Handle Stripe webhook events
 // @route   POST /api/payment/webhook
 // @access  Public (Stripe calls this)
+// @desc    Handle Stripe webhook events
+// @route   POST /api/payment/webhook
+// @access  Public (Stripe calls this)
 const handleWebhook = expressAsyncHandler(async (req, res) => {
   const sig = req.headers["stripe-signature"];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -333,28 +336,39 @@ const handleWebhook = expressAsyncHandler(async (req, res) => {
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    console.log(`✅ Webhook received: ${event.type}`);
   } catch (err) {
-    console.log(`Webhook signature verification failed: ${err.message}`);
+    console.log(`❌ Webhook signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   // Handle the event
   switch (event.type) {
-    case "payment_intent.succeeded":
-      await handlePaymentIntentSucceeded(event.data.object);
+    // ✅ THIS IS THE EVENT YOU NEED - IT'S ALREADY FIRING!
+    case "payment_intent.amount_capturable_updated":
+      await handlePaymentIntentCapturable(event.data.object);
       break;
+
+    case "payment_intent.succeeded":
+      console.log("Payment succeeded (captured):", event.data.object.id);
+      break;
+
     case "payment_intent.payment_failed":
       await handlePaymentIntentFailed(event.data.object);
       break;
+
     case "charge.refunded":
       await handleChargeRefunded(event.data.object);
       break;
+
     case "payout.paid":
       await handlePayoutPaid(event.data.object);
       break;
+
     case "payout.failed":
       await handlePayoutFailed(event.data.object);
       break;
+
     default:
       console.log(`Unhandled event type: ${event.type}`);
   }
@@ -362,6 +376,29 @@ const handleWebhook = expressAsyncHandler(async (req, res) => {
   res.json({ received: true });
 });
 
+const handlePaymentIntentCapturable = async (paymentIntent) => {
+  console.log(`💰 Funds held in escrow for: ${paymentIntent.id}`);
+
+  const order = await Order.findOne({
+    stripePaymentIntentId: paymentIntent.id,
+  });
+
+  if (order) {
+    console.log(`📦 Order found: ${order._id}`);
+    console.log(
+      `Current status: ${order.paymentStatus} → updating to requires_capture`,
+    );
+
+    order.paymentStatus = "requires_capture";
+    order.isPaid = true;
+    order.paidAt = new Date();
+
+    await order.save();
+    console.log(`✅ Order ${order._id} updated successfully`);
+  } else {
+    console.log(`❌ No order found for payment intent: ${paymentIntent.id}`);
+  }
+};
 // Webhook event handlers
 const handlePaymentIntentSucceeded = async (paymentIntent) => {
   const order = await Order.findOne({
