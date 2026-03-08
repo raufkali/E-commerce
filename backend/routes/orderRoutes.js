@@ -24,7 +24,6 @@ router.get("/my-orders", authMiddleware, verifyRole("user"), getMyOrders);
 // Seller Routes
 router.put("/update", authMiddleware, verifyRole("seller"), updateOrderStatus);
 router.get("/seller", authMiddleware, verifyRole("seller"), getSellerOrders);
-
 // Admin routes
 router.get("/", authMiddleware, verifyRole("admin"), getAllOrders);
 

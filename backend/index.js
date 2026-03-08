@@ -25,9 +25,14 @@ const cartRoutes = require("./routes/cartRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
-const webhook = require("./routes/webhook");
+const walletRoutes = require("./routes/walletRoutes");
 
 const app = express();
+
+// ✅ CORRECT: Apply raw body parser ONLY to webhook route BEFORE express.json()
+app.use("/payment/webhook", express.raw({ type: "application/json" }));
+
+// ✅ Then JSON parser for all other routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -53,7 +58,8 @@ app.use(
 
 // Serve static files from public directory
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
-// user defined routes
+
+// ✅ Mount routes (paymentRoutes WITHOUT raw parser)
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
@@ -62,7 +68,7 @@ app.use("/cart", cartRoutes);
 app.use("/category", categoryRoutes);
 app.use("/orders", orderRoutes);
 app.use("/payment", paymentRoutes);
-app.use("/webhook", webhook);
+app.use("/wallet", walletRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

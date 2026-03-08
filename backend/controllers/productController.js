@@ -15,9 +15,6 @@ const getAllProducts = asyncHandler(async (req, res) => {
 const createProduct = asyncHandler(async (req, res) => {
   const { name, description, price, category, discount, stock, isActive } =
     req.body;
-  console.log("req.body:", req.body);
-  console.log("req.files:", req.files);
-  console.log("req.user:", req.user);
   //   validation
   if (!name || !description || price == null || !category) {
     res.status(400);
@@ -150,33 +147,38 @@ const deleteProduct = asyncHandler(async (req, res) => {
 
 const updateProduct = asyncHandler(async (req, res) => {
   const data = req.body;
-  if (data.category) {
+  const id = req.params.id;
+
+  // Validate ID
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    throw new Error("Invalid ID is passed");
+  }
+
+  // Check if product exists
+  const product = await Product.findById(id);
+  if (!product) {
+    res.status(404);
+    throw new Error("Product not found");
+  }
+
+  // Only validate category if it's being changed
+  if (data.category && data.category != product.category) {
     if (!mongoose.Types.ObjectId.isValid(data.category)) {
       res.status(400);
       throw new Error("Invalid Category ID");
     }
 
     const categoryExists = await Category.findById(data.category);
-
     if (!categoryExists) {
       res.status(404);
       throw new Error("Category not found");
     }
-  }
-  const id = req.params.id;
-  //validating id:
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    res.status(400);
-    throw new Error("Invalid ID is passed");
+  } else {
+    delete data.category;
   }
 
-  // checking if the product exsists
-  const product = await Product.findById(id);
-  if (!product) {
-    res.status(404);
-    throw new Error("Product not found");
-  }
-  // verifying the seller or admin
+  // Verify authorization
   if (
     req.user.id.toString() != product.sellerId.toString() &&
     req.user.role != "admin"
@@ -184,12 +186,27 @@ const updateProduct = asyncHandler(async (req, res) => {
     res.status(401);
     throw new Error("Un-authorized to Update this product");
   }
-  // update the product
+
+  // Calculate finalPrice if price or discount changed
+  if (data.price !== undefined || data.discount !== undefined) {
+    const newPrice = data.price !== undefined ? data.price : product.price;
+    const newDiscount =
+      data.discount !== undefined ? data.discount : product.discount;
+
+    if (newDiscount > 0) {
+      data.finalPrice = newPrice - (newPrice * newDiscount) / 100;
+    } else {
+      data.finalPrice = newPrice;
+    }
+  }
+
+  // Update the product
   const updatedProduct = await Product.findByIdAndUpdate(id, data, {
-    new: true, // return updated doc
-    runValidators: true, // enforce schema validation
+    new: true,
+    runValidators: true,
   });
-  res.status(201).json({
+
+  res.status(200).json({
     success: true,
     oldProduct: product,
     updatedProduct,

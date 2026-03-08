@@ -18,7 +18,7 @@ router.post(
   "/create",
   authMiddleware,
   verifyRole("seller"),
-  uploadMultipleProducts, // This processes multipart/form-data
+  uploadMultipleProducts,
   createProduct,
 );
 

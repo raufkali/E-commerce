@@ -121,7 +121,6 @@ const getOrderById = asyncHandler(async (req, res) => {
     order,
   });
 });
-
 const getAllOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find()
     .populate({
