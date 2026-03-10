@@ -19,6 +19,8 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: 6,
     },
+    phone: String,
+    address: String,
     role: {
       type: String,
       enum: ["user", "seller", "admin"],

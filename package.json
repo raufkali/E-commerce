@@ -9,7 +9,8 @@
   "scripts": {
     "startB": "cd backend && nodemon index.js",
     "startF": "cd frontend && npm run dev",
-    "start": "start cmd /k \"npm run startB\" & start cmd /k \"npm run startF\""
+    "start": "start cmd /k \"npm run startB\" & start cmd /k \"npm run startF\"",
+    "stripe": "stripe listen --forward-to http://localhost:8080/payment/webhook"
   },
   "dependencies": {
     "axios": "^1.13.5",

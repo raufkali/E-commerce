@@ -2,6 +2,7 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const asyncHandler = require("express-async-handler");
+const Wallet = require("../models/Wallet");
 
 // GET ALL USERS
 const getAllUsers = asyncHandler(async (req, res) => {
@@ -15,6 +16,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
 // CREATE USER
 const createUser = asyncHandler(async (req, res) => {
   const data = req.body;
+  console.log(data);
   // determine allowed roles
   let allowedRoles = ["user", "seller"];
   if (req.user && req.user.role == "admin") {
@@ -42,7 +44,11 @@ const createUser = asyncHandler(async (req, res) => {
   data.password = hashedPass;
 
   const user = await User.create(data);
-
+  // create wallet for user
+  await Wallet.create({
+    user: user._id,
+    role: data.role,
+  });
   // generate JWT
   if (req.user && req.user.role == "admin") {
     res.status(201).json({

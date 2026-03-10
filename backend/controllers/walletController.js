@@ -3,11 +3,38 @@ const Wallet = require("../models/Wallet");
 const User = require("../models/User");
 const stripe = require("../config/stripe");
 
+// Helper function to add transaction
+const addTransaction = async (wallet, transactionData) => {
+  const transaction = {
+    sender: transactionData.sender || "system",
+    receiver: transactionData.receiver || wallet.user.toString(),
+    type: transactionData.type,
+    amount: transactionData.amount,
+    status: transactionData.status || "pending",
+    description: transactionData.description,
+    reference: transactionData.reference,
+    stripePaymentIntentId: transactionData.stripePaymentIntentId,
+    stripePayoutId: transactionData.stripePayoutId,
+  };
+  
+  wallet.transactions.push(transaction);
+  wallet.lastTransactionAt = new Date();
+  return transaction;
+};
+
 // @desc    Get current user's wallet
 // @route   GET /api/wallet/me
 // @access  Private
 const getMyWallet = asyncHandler(async (req, res) => {
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  let wallet = await Wallet.findOne({ user: req.user.id });
+  
+  if (!wallet) {
+    // Create wallet if it doesn't exist
+    wallet = await Wallet.create({
+      user: req.user.id,
+      role: req.user.role === "seller" ? "seller" : "buyer",
+    });
+  }
 
   res.json({
     success: true,
@@ -21,8 +48,7 @@ const getMyWallet = asyncHandler(async (req, res) => {
       totalSpent: wallet.totalSpent,
       currency: wallet.currency,
       bankAccountLast4: wallet.bankAccountLast4,
-      autoWithdrawal: wallet.autoWithdrawal,
-      autoWithdrawalThreshold: wallet.autoWithdrawalThreshold,
+      bankAccountName: wallet.bankAccountName,
       lastTransactionAt: wallet.lastTransactionAt,
       lastWithdrawalAt: wallet.lastWithdrawalAt,
     },
@@ -33,7 +59,20 @@ const getMyWallet = asyncHandler(async (req, res) => {
 // @route   GET /api/wallet/balance
 // @access  Private
 const getBalance = asyncHandler(async (req, res) => {
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  const wallet = await Wallet.findOne({ user: req.user.id });
+  
+  if (!wallet) {
+    return res.json({
+      success: true,
+      balances: {
+        locked: 0,
+        available: 0,
+        pending: 0,
+        total: 0,
+      },
+      currency: "usd",
+    });
+  }
 
   res.json({
     success: true,
@@ -53,7 +92,19 @@ const getBalance = asyncHandler(async (req, res) => {
 const getTransactions = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, type } = req.query;
 
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  const wallet = await Wallet.findOne({ user: req.user.id });
+  
+  if (!wallet) {
+    return res.json({
+      success: true,
+      transactions: [],
+      pagination: {
+        total: 0,
+        page: parseInt(page),
+        pages: 0,
+      },
+    });
+  }
 
   // Filter transactions
   let transactions = [...wallet.transactions].reverse(); // Latest first
@@ -92,10 +143,14 @@ const addBankAccount = asyncHandler(async (req, res) => {
     throw new Error("Please provide all bank account details");
   }
 
-  // In a real implementation, you'd create a Stripe bank account token
-  // For now, we'll just store the last 4 digits
-
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  let wallet = await Wallet.findOne({ user: req.user.id });
+  
+  if (!wallet) {
+    wallet = await Wallet.create({
+      user: req.user.id,
+      role: "seller",
+    });
+  }
 
   wallet.bankAccountLast4 = accountNumber.slice(-4);
   wallet.bankAccountName = accountHolderName;
@@ -103,8 +158,10 @@ const addBankAccount = asyncHandler(async (req, res) => {
   await wallet.save();
 
   // Add transaction record
-  await wallet.addTransaction({
-    type: "fee",
+  await addTransaction(wallet, {
+    sender: "system",
+    receiver: req.user.id,
+    type: "received",
     amount: 0,
     status: "completed",
     description: `Bank account added: ${bankName || "Bank"} ending in ${accountNumber.slice(-4)}`,
@@ -116,6 +173,7 @@ const addBankAccount = asyncHandler(async (req, res) => {
     success: true,
     message: "Bank account added successfully",
     bankAccountLast4: wallet.bankAccountLast4,
+    bankAccountName: wallet.bankAccountName,
   });
 });
 
@@ -130,10 +188,15 @@ const withdrawToBank = asyncHandler(async (req, res) => {
     throw new Error("Please provide a valid amount");
   }
 
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  const wallet = await Wallet.findOne({ user: req.user.id });
+
+  if (!wallet) {
+    res.status(404);
+    throw new Error("Wallet not found");
+  }
 
   // Check if seller has enough available balance
-  if (!wallet.hasSufficientBalance(amount, "available")) {
+  if (wallet.availableBalance < amount) {
     res.status(400);
     throw new Error("Insufficient available balance");
   }
@@ -147,28 +210,28 @@ const withdrawToBank = asyncHandler(async (req, res) => {
   // Update wallet balances
   wallet.availableBalance -= amount;
   wallet.pendingWithdrawal += amount;
+  wallet.lastWithdrawalAt = new Date();
 
   // Add transaction record
-  const transaction = await wallet.addTransaction({
+  await addTransaction(wallet, {
+    sender: req.user.id,
+    receiver: "bank",
     type: "withdrawal",
     amount: -amount,
     status: "pending",
     description: `Withdrawal request to bank account ending in ${wallet.bankAccountLast4}`,
   });
 
-  wallet.lastWithdrawalAt = new Date();
   await wallet.save();
-
-  // Here you would integrate with Stripe to create an actual payout
-  // This is a placeholder for now
 
   res.json({
     success: true,
     message: "Withdrawal request submitted successfully",
-    transaction: transaction,
+    transaction: wallet.transactions[wallet.transactions.length - 1],
     newBalance: {
       available: wallet.availableBalance,
       pending: wallet.pendingWithdrawal,
+      locked: wallet.lockedBalance,
     },
   });
 });
@@ -177,7 +240,14 @@ const withdrawToBank = asyncHandler(async (req, res) => {
 // @route   GET /api/wallet/withdrawals
 // @access  Private (Seller only)
 const getWithdrawalHistory = asyncHandler(async (req, res) => {
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  const wallet = await Wallet.findOne({ user: req.user.id });
+
+  if (!wallet) {
+    return res.json({
+      success: true,
+      withdrawals: [],
+    });
+  }
 
   const withdrawals = wallet.transactions
     .filter((t) => t.type === "withdrawal")
@@ -195,7 +265,12 @@ const getWithdrawalHistory = asyncHandler(async (req, res) => {
 const updateWithdrawalSettings = asyncHandler(async (req, res) => {
   const { autoWithdrawal, autoWithdrawalThreshold } = req.body;
 
-  const wallet = await Wallet.getOrCreateWallet(req.user.id, req.user.role);
+  const wallet = await Wallet.findOne({ user: req.user.id });
+
+  if (!wallet) {
+    res.status(404);
+    throw new Error("Wallet not found");
+  }
 
   if (autoWithdrawal !== undefined) {
     wallet.autoWithdrawal = autoWithdrawal;
@@ -267,38 +342,64 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
     throw new Error("Wallet not found");
   }
 
+  let transactionType;
+  let description;
+
   // Adjust balance based on type
-  if (type === "credit") {
-    wallet.availableBalance += amount;
-  } else if (type === "debit") {
-    if (!wallet.hasSufficientBalance(amount, "available")) {
+  switch (type) {
+    case "credit":
+      wallet.availableBalance += amount;
+      wallet.totalEarned += amount;
+      transactionType = "received";
+      description = `Admin credited: ${reason}`;
+      break;
+      
+    case "debit":
+      if (wallet.availableBalance < amount) {
+        res.status(400);
+        throw new Error("Insufficient available balance");
+      }
+      wallet.availableBalance -= amount;
+      transactionType = "send";
+      description = `Admin debited: ${reason}`;
+      break;
+      
+    case "lock":
+      if (wallet.availableBalance < amount) {
+        res.status(400);
+        throw new Error("Insufficient available balance");
+      }
+      wallet.availableBalance -= amount;
+      wallet.lockedBalance += amount;
+      transactionType = "send";
+      description = `Admin locked funds: ${reason}`;
+      break;
+      
+    case "unlock":
+      if (wallet.lockedBalance < amount) {
+        res.status(400);
+        throw new Error("Insufficient locked balance");
+      }
+      wallet.lockedBalance -= amount;
+      wallet.availableBalance += amount;
+      transactionType = "received";
+      description = `Admin unlocked funds: ${reason}`;
+      break;
+      
+    default:
       res.status(400);
-      throw new Error("Insufficient available balance");
-    }
-    wallet.availableBalance -= amount;
-  } else if (type === "lock") {
-    if (!wallet.hasSufficientBalance(amount, "available")) {
-      res.status(400);
-      throw new Error("Insufficient available balance");
-    }
-    wallet.availableBalance -= amount;
-    wallet.lockedBalance += amount;
-  } else if (type === "unlock") {
-    if (!wallet.hasSufficientBalance(amount, "locked")) {
-      res.status(400);
-      throw new Error("Insufficient locked balance");
-    }
-    wallet.lockedBalance -= amount;
-    wallet.availableBalance += amount;
+      throw new Error("Invalid adjustment type");
   }
 
   // Add transaction record
-  await wallet.addTransaction({
-    type: type === "credit" || type === "debit" ? type : "fee",
-    amount: type === "debit" ? -amount : amount,
+  await addTransaction(wallet, {
+    sender: type === "credit" || type === "unlock" ? "admin" : wallet.user.toString(),
+    receiver: type === "debit" || type === "lock" ? "admin" : wallet.user.toString(),
+    type: transactionType,
+    amount: type === "debit" || type === "lock" ? -amount : amount,
     status: "completed",
-    description: `Admin adjustment: ${reason}`,
-    metadata: { adminId: req.user.id },
+    description: description,
+    reference: `admin-${Date.now()}`,
   });
 
   await wallet.save();
@@ -309,6 +410,7 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
     wallet: {
       lockedBalance: wallet.lockedBalance,
       availableBalance: wallet.availableBalance,
+      pendingWithdrawal: wallet.pendingWithdrawal,
     },
   });
 });
@@ -327,15 +429,22 @@ const adminFreezeWallet = asyncHandler(async (req, res) => {
     throw new Error("Wallet not found");
   }
 
-  // You can add a frozen field to your schema if needed
-  // For now, we'll just add a transaction record
+  // Add frozen field if not exists
+  if (!wallet.isFrozen) {
+    wallet.isFrozen = freeze;
+  } else {
+    wallet.isFrozen = freeze;
+  }
 
-  await wallet.addTransaction({
-    type: "fee",
+  // Add transaction record
+  await addTransaction(wallet, {
+    sender: "admin",
+    receiver: wallet.user.toString(),
+    type: "send",
     amount: 0,
     status: "completed",
     description: freeze ? "Wallet frozen by admin" : "Wallet unfrozen by admin",
-    metadata: { adminId: req.user.id },
+    reference: `admin-${Date.now()}`,
   });
 
   await wallet.save();
@@ -343,6 +452,7 @@ const adminFreezeWallet = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: freeze ? "Wallet frozen" : "Wallet unfrozen",
+    isFrozen: wallet.isFrozen,
   });
 });
 

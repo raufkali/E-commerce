@@ -26,6 +26,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const walletRoutes = require("./routes/walletRoutes");
+const profileRoutes = require("./routes/profileRoutes");
 
 const app = express();
 
@@ -69,7 +70,7 @@ app.use("/category", categoryRoutes);
 app.use("/orders", orderRoutes);
 app.use("/payment", paymentRoutes);
 app.use("/wallet", walletRoutes);
-
+app.use("/profile", profileRoutes);
 // Error handling middleware
 app.use(errorHandler);
 
