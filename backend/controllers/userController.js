@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const asyncHandler = require("express-async-handler");
 const Wallet = require("../models/Wallet");
-
+const Cart = require("../models/Cart");
 // GET ALL USERS
 const getAllUsers = asyncHandler(async (req, res) => {
   const allUsers = await User.find();
@@ -118,6 +118,17 @@ const deleteUser = asyncHandler(async (req, res) => {
   if (!req.params.id || !req.user.id) {
     res.status(400);
     throw new Error("Invalid Token or Invalid ID");
+  }
+  const userId = req.user.id;
+  // delete user wallet
+  const wallet = await Wallet.findOne({ userId });
+  if (wallet) {
+    await Wallet.findByIdAndDelete(wallet._id);
+  }
+  // remove cart
+  const cart = await Cart.findOne({ userId });
+  if (cart) {
+    await Cart.findByIdAndDelete(cart._id);
   }
   // delete the user
   const user = await User.findByIdAndDelete(req.params.id);

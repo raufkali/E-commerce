@@ -47,7 +47,7 @@ const walletSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "seller", "both"],
+      enum: ["user", "seller", "admin"],
       default: "user",
     },
     // Balances

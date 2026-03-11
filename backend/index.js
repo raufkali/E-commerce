@@ -27,17 +27,15 @@ const orderRoutes = require("./routes/orderRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const walletRoutes = require("./routes/walletRoutes");
 const profileRoutes = require("./routes/profileRoutes");
+const sellerRoutes = require("./routes/sellerRoutes");
 
 const app = express();
 
-// ✅ CORRECT: Apply raw body parser ONLY to webhook route BEFORE express.json()
 app.use("/payment/webhook", express.raw({ type: "application/json" }));
 
-// ✅ Then JSON parser for all other routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Make upload middleware available throughout the app
 app.locals.upload = {
   singleProduct: uploadSingleProduct,
   multipleProducts: uploadMultipleProducts,
@@ -60,7 +58,6 @@ app.use(
 // Serve static files from public directory
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
-// ✅ Mount routes (paymentRoutes WITHOUT raw parser)
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
@@ -71,6 +68,8 @@ app.use("/orders", orderRoutes);
 app.use("/payment", paymentRoutes);
 app.use("/wallet", walletRoutes);
 app.use("/profile", profileRoutes);
+app.use("/seller", sellerRoutes);
+
 // Error handling middleware
 app.use(errorHandler);
 

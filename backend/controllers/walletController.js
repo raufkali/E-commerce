@@ -16,7 +16,7 @@ const addTransaction = async (wallet, transactionData) => {
     stripePaymentIntentId: transactionData.stripePaymentIntentId,
     stripePayoutId: transactionData.stripePayoutId,
   };
-  
+
   wallet.transactions.push(transaction);
   wallet.lastTransactionAt = new Date();
   return transaction;
@@ -27,12 +27,12 @@ const addTransaction = async (wallet, transactionData) => {
 // @access  Private
 const getMyWallet = asyncHandler(async (req, res) => {
   let wallet = await Wallet.findOne({ user: req.user.id });
-  
+
   if (!wallet) {
     // Create wallet if it doesn't exist
     wallet = await Wallet.create({
       user: req.user.id,
-      role: req.user.role === "seller" ? "seller" : "buyer",
+      role: req.user.role,
     });
   }
 
@@ -60,7 +60,7 @@ const getMyWallet = asyncHandler(async (req, res) => {
 // @access  Private
 const getBalance = asyncHandler(async (req, res) => {
   const wallet = await Wallet.findOne({ user: req.user.id });
-  
+
   if (!wallet) {
     return res.json({
       success: true,
@@ -93,7 +93,7 @@ const getTransactions = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, type } = req.query;
 
   const wallet = await Wallet.findOne({ user: req.user.id });
-  
+
   if (!wallet) {
     return res.json({
       success: true,
@@ -144,7 +144,7 @@ const addBankAccount = asyncHandler(async (req, res) => {
   }
 
   let wallet = await Wallet.findOne({ user: req.user.id });
-  
+
   if (!wallet) {
     wallet = await Wallet.create({
       user: req.user.id,
@@ -353,7 +353,7 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
       transactionType = "received";
       description = `Admin credited: ${reason}`;
       break;
-      
+
     case "debit":
       if (wallet.availableBalance < amount) {
         res.status(400);
@@ -363,7 +363,7 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
       transactionType = "send";
       description = `Admin debited: ${reason}`;
       break;
-      
+
     case "lock":
       if (wallet.availableBalance < amount) {
         res.status(400);
@@ -374,7 +374,7 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
       transactionType = "send";
       description = `Admin locked funds: ${reason}`;
       break;
-      
+
     case "unlock":
       if (wallet.lockedBalance < amount) {
         res.status(400);
@@ -385,7 +385,7 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
       transactionType = "received";
       description = `Admin unlocked funds: ${reason}`;
       break;
-      
+
     default:
       res.status(400);
       throw new Error("Invalid adjustment type");
@@ -393,8 +393,10 @@ const adminAdjustBalance = asyncHandler(async (req, res) => {
 
   // Add transaction record
   await addTransaction(wallet, {
-    sender: type === "credit" || type === "unlock" ? "admin" : wallet.user.toString(),
-    receiver: type === "debit" || type === "lock" ? "admin" : wallet.user.toString(),
+    sender:
+      type === "credit" || type === "unlock" ? "admin" : wallet.user.toString(),
+    receiver:
+      type === "debit" || type === "lock" ? "admin" : wallet.user.toString(),
     type: transactionType,
     amount: type === "debit" || type === "lock" ? -amount : amount,
     status: "completed",
