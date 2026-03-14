@@ -55,8 +55,8 @@ router.post(
       // Create an account link for onboarding
       const accountLink = await stripe.accountLinks.create({
         account: account.id,
-        refresh_url: `${process.env.FRONTEND_URL}/seller/onboarding/refresh`,
-        return_url: `${process.env.FRONTEND_URL}/seller/onboarding/complete`,
+        refresh_url: `${process.env.FRONTEND_URL1}/seller/onboarding/refresh`,
+        return_url: `${process.env.FRONTEND_URL1}/seller/onboarding/complete`,
         type: "account_onboarding",
       });
 

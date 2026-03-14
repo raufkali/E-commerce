@@ -48,15 +48,11 @@ app.locals.upload = {
 };
 
 // FrontEnd - BackEnd
-app.use(
-  cors({
-    origin: [process.env.FRONTEND_URL1, process.env.FRONTEND_URL2],
-    credentials: true,
-  }),
-);
+app.use(cors());
 
 // Serve static files from public directory
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
+app.use("/img", express.static(path.join(__dirname, "public/img")));
 
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
@@ -76,6 +72,6 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 8080;
 
 // Server
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("App started on PORT:", PORT);
 });
