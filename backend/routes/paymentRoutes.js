@@ -4,10 +4,10 @@ const router = express.Router();
 const {
   createPaymentSession,
   withdrawFunds,
-  confirmDelivery, // ✅ Changed from capturePayment
+  confirmDelivery,
   refundPayment,
   handleWebhook,
-  adminReleaseFunds, // ✅ New admin function
+  adminReleaseFunds,
 } = require("../controllers/paymentController");
 
 const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
@@ -24,10 +24,10 @@ router.post(
 );
 
 router.put(
-  "/confirm-delivery/:orderId", // ✅ Changed from /capture/:orderId
+  "/confirm-delivery/:orderId",
   authMiddleware,
   verifyRole("user"),
-  confirmDelivery, // ✅ Changed from capturePayment
+  confirmDelivery,
 );
 
 // ✅ Seller routes
@@ -42,7 +42,7 @@ router.post(
 );
 
 router.post(
-  "/admin/release/:orderId", // ✅ New admin route for force releasing escrow
+  "/admin/release/:orderId",
   authMiddleware,
   verifyRole("admin"),
   adminReleaseFunds,

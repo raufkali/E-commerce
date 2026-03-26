@@ -4,13 +4,31 @@ const Order = require("../models/Order");
 const Wallet = require("../models/Wallet");
 const User = require("../models/User");
 
+// Helper function to add transaction to wallet
+const addWalletTransaction = async (wallet, transactionData) => {
+  const transaction = {
+    sender: transactionData.sender || "system",
+    receiver: transactionData.receiver,
+    type: transactionData.type, // Must match enum: ["send", "received", "refund", "withdrawal"]
+    amount: transactionData.amount,
+    status: transactionData.status || "pending", // Must match enum: ["pending", "locked", "available", "completed", "failed"]
+    description: transactionData.description,
+    reference: transactionData.reference,
+    stripePaymentIntentId: transactionData.stripePaymentIntentId,
+    stripePayoutId: transactionData.stripePayoutId,
+  };
+
+  wallet.transactions.push(transaction);
+  wallet.lastTransactionAt = new Date();
+  return transaction;
+};
+
 // @desc    Create payment intent for order
 // @route   POST /api/payment/create-payment-intent
 // @access  Private (User)
 const createPaymentSession = expressAsyncHandler(async (req, res) => {
   const { orderId } = req.body;
 
-  // Find the order in database and populate seller info
   const order = await Order.findById(orderId)
     .populate("user")
     .populate("orderItems.seller");
@@ -23,31 +41,30 @@ const createPaymentSession = expressAsyncHandler(async (req, res) => {
   // Check if all sellers have Stripe accounts connected
   for (const item of order.orderItems) {
     const seller = await User.findById(item.seller);
-    if (!seller.stripeAccountId) {
+    if (!seller || !seller.stripeAccountId) {
       res.status(400);
       throw new Error(
-        `Seller ${seller.fullname} hasn't connected their Stripe account yet`,
+        `Seller ${seller?.fullname || "Unknown"} hasn't connected their Stripe account yet`,
       );
     }
   }
 
-  // Create payment intent with order total - AUTOMATIC capture (money goes to your account)
+  // Use manual capture to hold funds in escrow
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(order.totalPrice * 100), // Convert to cents
+    amount: Math.round(order.totalPrice * 100),
     currency: "usd",
-    capture_method: "automatic", // Money goes directly to your admin account
-    transfer_group: `order_${orderId}`, // Group transfers for this order
+    capture_method: "manual",
+    transfer_group: `order_${orderId}`,
     metadata: {
       orderId: order._id.toString(),
       userId: req.user.id,
     },
   });
 
-  // Update the order with Stripe info
   order.stripePaymentIntentId = paymentIntent.id;
   order.stripeClientSecret = paymentIntent.client_secret;
-  order.paymentStatus = "requires_payment_method";
-
+  order.paymentStatus = "requires_capture";
+  order.escrowStatus = "held";
   await order.save();
 
   res.status(200).json({
@@ -57,7 +74,7 @@ const createPaymentSession = expressAsyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Confirm delivery - RELEASE FUNDS FROM LOCKED TO AVAILABLE (database only)
+// @desc    Confirm delivery - RELEASE FUNDS FROM ESCROW
 // @route   PUT /api/payment/confirm-delivery/:orderId
 // @access  Private (User)
 const confirmDelivery = expressAsyncHandler(async (req, res) => {
@@ -72,73 +89,123 @@ const confirmDelivery = expressAsyncHandler(async (req, res) => {
     throw new Error("Order not found");
   }
 
-  // Verify this order belongs to the user
   if (order.user._id.toString() !== req.user.id) {
     res.status(403);
     throw new Error("Not authorized to confirm this order");
   }
 
-  // Check if order can be confirmed
   if (order.orderStatus === "delivered") {
     res.status(400);
     throw new Error("Order already delivered");
   }
 
-  if (order.paymentStatus !== "paid") {
+  if (order.paymentStatus !== "requires_capture") {
     res.status(400);
-    throw new Error("Payment not completed");
+    throw new Error("Payment not in escrow state");
   }
 
-  if (order.escrowStatus !== "locked") {
+  if (order.escrowStatus !== "held") {
     res.status(400);
     throw new Error("Funds are not in escrow");
   }
 
-  // Update order status - delivery confirmed
+  // Capture the payment in Stripe
+  let capturedPaymentIntent;
+  try {
+    capturedPaymentIntent = await stripe.paymentIntents.capture(
+      order.stripePaymentIntentId,
+    );
+
+    if (capturedPaymentIntent.status !== "succeeded") {
+      throw new Error(
+        `Payment capture failed with status: ${capturedPaymentIntent.status}`,
+      );
+    }
+  } catch (stripeError) {
+    console.error("Stripe capture error:", stripeError);
+    res.status(500);
+    throw new Error(`Failed to capture payment: ${stripeError.message}`);
+  }
+
+  // Update database
   order.orderStatus = "delivered";
   order.deliveredAt = new Date();
-  order.escrowStatus = "released"; // Database-level release
+  order.paymentStatus = "captured";
+  order.escrowStatus = "released";
+  order.releasedAt = new Date();
   await order.save();
 
-  // Update seller wallets - move from LOCKED to AVAILABLE
+  // Update seller wallets with available funds
   for (const item of order.orderItems) {
     const sellerId = item.seller?._id || item.seller;
     if (!sellerId) continue;
 
-    const wallet = await Wallet.findOne({ user: sellerId });
-    if (wallet) {
-      const amount = item.price * item.quantity;
+    let wallet = await Wallet.findOne({ user: sellerId });
 
-      // Move from locked to available
-      wallet.lockedBalance -= amount;
-      wallet.availableBalance += amount;
+    // Create wallet if it doesn't exist
+    if (!wallet) {
+      wallet = await Wallet.create({
+        user: sellerId,
+        role: "seller",
+      });
+    }
 
-      await wallet.addTransaction({
-        sender: "escrow",
-        receiver: sellerId.toString(),
-        type: "received",
-        amount: amount,
-        status: "available",
-        description: `Funds released for order #${order._id.toString().slice(-8)}`,
+    const amount = item.price * item.quantity;
+
+    // Calculate platform fee (10%)
+    const platformFee = amount * 0.1;
+    const sellerAmount = amount - platformFee;
+
+    // Update wallet balances
+    wallet.lockedBalance = Math.max(0, wallet.lockedBalance - amount);
+    wallet.availableBalance += sellerAmount;
+    wallet.totalEarned += sellerAmount;
+
+    // Add transaction for funds release
+    await addWalletTransaction(wallet, {
+      sender: "escrow",
+      receiver: sellerId.toString(),
+      type: "received",
+      amount: sellerAmount,
+      status: "completed",
+      description: `Funds released for order #${order._id.toString().slice(-8)} (fee: $${platformFee.toFixed(2)})`,
+      reference: order._id.toString(),
+      stripePaymentIntentId: order.stripePaymentIntentId,
+    });
+
+    // Add transaction for fee deduction (as a separate transaction)
+    if (platformFee > 0) {
+      await addWalletTransaction(wallet, {
+        sender: sellerId.toString(),
+        receiver: "platform",
+        type: "send",
+        amount: -platformFee,
+        status: "completed",
+        description: `Platform fee for order #${order._id.toString().slice(-8)}`,
         reference: order._id.toString(),
       });
-
-      await wallet.save();
     }
+
+    await wallet.save();
+    console.log(
+      `✅ Seller ${sellerId} wallet updated: +${sellerAmount} available (fee: ${platformFee})`,
+    );
   }
 
   res.json({
     success: true,
-    message: "Delivery confirmed! Funds are now available for withdrawal.",
+    message:
+      "Delivery confirmed! Payment captured and funds are now available for withdrawal.",
     order: {
       _id: order._id,
       orderStatus: order.orderStatus,
       escrowStatus: order.escrowStatus,
+      paymentStatus: order.paymentStatus,
     },
   });
 });
 
-// @desc    Withdraw funds to connected Stripe account (seller only)
+// @desc    Withdraw funds to connected Stripe account
 // @route   POST /api/payment/withdraw
 // @access  Private (Seller)
 const withdrawFunds = expressAsyncHandler(async (req, res) => {
@@ -150,8 +217,7 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
     throw new Error("Please provide a valid amount");
   }
 
-  // Get seller's wallet and user info
-  const wallet = await Wallet.findOne({ user: sellerId });
+  let wallet = await Wallet.findOne({ user: sellerId });
   const seller = await User.findById(sellerId);
 
   if (!wallet) {
@@ -159,21 +225,36 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
     throw new Error("Wallet not found");
   }
 
-  // Check if seller has enough available balance
   if (wallet.availableBalance < amount) {
     res.status(400);
     throw new Error("Insufficient available balance");
   }
 
-  // Check if seller has Stripe Connect account
   if (!seller.stripeAccountId) {
     res.status(400);
     throw new Error("Please connect your Stripe account first");
   }
 
-  // Create transfer to seller's connected Stripe account
+  // Verify seller's Stripe account is ready to receive payments
+  try {
+    const stripeAccount = await stripe.accounts.retrieve(
+      seller.stripeAccountId,
+    );
+    if (!stripeAccount.charges_enabled || !stripeAccount.payouts_enabled) {
+      res.status(400);
+      throw new Error(
+        "Your Stripe account is not fully set up to receive payments",
+      );
+    }
+  } catch (stripeError) {
+    console.error("Stripe account verification error:", stripeError);
+    res.status(400);
+    throw new Error("Stripe account verification failed");
+  }
+
   let transfer;
   try {
+    // Create transfer to seller's connected account
     transfer = await stripe.transfers.create({
       amount: Math.round(amount * 100),
       currency: "usd",
@@ -182,6 +263,7 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
       metadata: {
         sellerId: sellerId,
         withdrawalType: "seller_withdrawal",
+        walletBalance: wallet.availableBalance,
       },
     });
   } catch (stripeError) {
@@ -190,14 +272,13 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
     throw new Error(`Stripe error: ${stripeError.message}`);
   }
 
-  // Update wallet balances
+  // Update wallet
   wallet.availableBalance -= amount;
   wallet.pendingWithdrawal += amount;
   wallet.totalWithdrawn += amount;
   wallet.lastWithdrawalAt = new Date();
 
-  // Add transaction record
-  const transaction = await wallet.addTransaction({
+  await addWalletTransaction(wallet, {
     sender: sellerId.toString(),
     receiver: "stripe_connect",
     type: "withdrawal",
@@ -213,7 +294,7 @@ const withdrawFunds = expressAsyncHandler(async (req, res) => {
     success: true,
     message:
       "Withdrawal initiated successfully. Funds will be transferred to your Stripe account.",
-    transaction,
+    transaction: wallet.transactions[wallet.transactions.length - 1],
     transfer: {
       id: transfer.id,
       amount: transfer.amount / 100,
@@ -248,79 +329,121 @@ const refundPayment = expressAsyncHandler(async (req, res) => {
     throw new Error("Order already refunded");
   }
 
-  // Create refund in Stripe
-  const refund = await stripe.refunds.create({
-    payment_intent: order.stripePaymentIntentId,
-    reason: reason || "requested_by_customer",
-  });
+  if (!order.stripePaymentIntentId) {
+    res.status(400);
+    throw new Error("No payment found for this order");
+  }
 
-  // Update order
-  order.paymentStatus = "refunded";
-  order.refundedAt = new Date();
-  await order.save();
+  // Handle refund based on escrow state
+  if (order.escrowStatus === "held") {
+    // Funds are still in escrow (authorized but not captured)
+    try {
+      await stripe.paymentIntents.cancel(order.stripePaymentIntentId);
 
-  // Handle wallet adjustments based on escrow status
-  if (order.escrowStatus === "released") {
-    for (const item of order.orderItems) {
-      const sellerId = item.seller._id.toString();
-      const wallet = await Wallet.findOne({ user: sellerId });
+      order.paymentStatus = "refunded";
+      order.escrowStatus = "refunded";
+      order.refundedAt = new Date();
+      await order.save();
 
-      if (wallet) {
-        const amount = item.price * item.quantity;
-
-        if (wallet.availableBalance < amount) {
-          console.warn(
-            `Seller ${sellerId} has insufficient balance for refund`,
-          );
-        }
-
-        wallet.availableBalance -= amount;
-        wallet.totalEarned -= amount;
-
-        await wallet.addTransaction({
-          sender: sellerId,
-          receiver: "system",
+      // Update buyer's wallet (add refund transaction)
+      const buyerWallet = await Wallet.findOne({ user: order.user._id });
+      if (buyerWallet) {
+        await addWalletTransaction(buyerWallet, {
+          sender: "system",
+          receiver: order.user._id.toString(),
           type: "refund",
-          amount: -amount,
+          amount: order.totalPrice,
+          status: "completed",
+          description: `Refund for order #${order._id.toString().slice(-8)}`,
+          reference: order._id.toString(),
+          stripePaymentIntentId: order.stripePaymentIntentId,
+        });
+        await buyerWallet.save();
+      }
+    } catch (stripeError) {
+      console.error("Stripe cancellation error:", stripeError);
+      res.status(500);
+      throw new Error(`Failed to cancel payment: ${stripeError.message}`);
+    }
+  } else if (order.escrowStatus === "released") {
+    // Funds were already captured and possibly withdrawn by seller
+    try {
+      const refund = await stripe.refunds.create({
+        payment_intent: order.stripePaymentIntentId,
+        reason: reason || "requested_by_customer",
+      });
+
+      order.paymentStatus = "refunded";
+      order.escrowStatus = "refunded";
+      order.refundedAt = new Date();
+      await order.save();
+
+      // Update seller wallets (deduct funds that were released)
+      for (const item of order.orderItems) {
+        const sellerId = item.seller?._id || item.seller;
+        if (!sellerId) continue;
+
+        let wallet = await Wallet.findOne({ user: sellerId });
+
+        if (wallet) {
+          const amount = item.price * item.quantity;
+          const platformFee = amount * 0.1;
+          const sellerAmount = amount - platformFee;
+
+          // Deduct from available balance if funds were released
+          if (wallet.availableBalance >= sellerAmount) {
+            wallet.availableBalance -= sellerAmount;
+          } else {
+            // If seller already withdrew, set to zero and track negative
+            wallet.availableBalance = 0;
+          }
+
+          wallet.totalEarned = Math.max(0, wallet.totalEarned - sellerAmount);
+
+          await addWalletTransaction(wallet, {
+            sender: sellerId.toString(),
+            receiver: "buyer",
+            type: "refund",
+            amount: -sellerAmount,
+            status: "completed",
+            description: `Refund for order #${order._id.toString().slice(-8)}`,
+            reference: order._id.toString(),
+            stripePaymentIntentId: refund.id,
+          });
+
+          await wallet.save();
+        }
+      }
+
+      // Update buyer's wallet (add refund transaction)
+      const buyerWallet = await Wallet.findOne({ user: order.user._id });
+      if (buyerWallet) {
+        await addWalletTransaction(buyerWallet, {
+          sender: "system",
+          receiver: order.user._id.toString(),
+          type: "refund",
+          amount: order.totalPrice,
           status: "completed",
           description: `Refund for order #${order._id.toString().slice(-8)}`,
           reference: order._id.toString(),
           stripePaymentIntentId: refund.id,
         });
-
-        await wallet.save();
+        await buyerWallet.save();
       }
+    } catch (stripeError) {
+      console.error("Stripe refund error:", stripeError);
+      res.status(500);
+      throw new Error(`Failed to process refund: ${stripeError.message}`);
     }
-  } else if (order.escrowStatus === "locked") {
-    for (const item of order.orderItems) {
-      const sellerId = item.seller?._id || item.seller;
-      if (!sellerId) continue;
-
-      const wallet = await Wallet.findOne({ user: sellerId });
-      if (wallet) {
-        const amount = item.price * item.quantity;
-        wallet.lockedBalance -= amount;
-
-        await wallet.addTransaction({
-          sender: sellerId,
-          receiver: "system",
-          type: "refund",
-          amount: -amount,
-          status: "completed",
-          description: `Refund for order #${order._id.toString().slice(-8)} - funds unlocked`,
-          reference: order._id.toString(),
-          stripePaymentIntentId: refund.id,
-        });
-
-        await wallet.save();
-      }
-    }
+  } else {
+    res.status(400);
+    throw new Error(`Cannot refund order in ${order.escrowStatus} state`);
   }
 
   res.json({
     success: true,
     message: "Payment refunded successfully",
-    refundId: refund.id,
+    refundId: order.escrowStatus === "held" ? "cancelled" : "refunded",
   });
 });
 
@@ -342,22 +465,46 @@ const handleWebhook = expressAsyncHandler(async (req, res) => {
   }
 
   switch (event.type) {
+    case "payment_intent.created":
+      console.log(`📝 Payment intent created: ${event.data.object.id}`);
+      break;
+
+    case "payment_intent.amount_capturable_updated":
+      console.log(
+        `💰 Payment intent amount capturable: ${event.data.object.id}`,
+      );
+      await handlePaymentIntentCapturable(event.data.object);
+      break;
+
     case "payment_intent.succeeded":
       await handlePaymentIntentSucceeded(event.data.object);
       break;
+
+    case "payment_intent.canceled":
+      await handlePaymentIntentCanceled(event.data.object);
+      break;
+
     case "payment_intent.payment_failed":
       await handlePaymentIntentFailed(event.data.object);
       break;
+
+    case "charge.captured":
+      await handleChargeCaptured(event.data.object);
+      break;
+
     case "charge.refunded":
       await handleChargeRefunded(event.data.object);
       break;
+
     case "transfer.created":
     case "transfer.paid":
       await handleTransferPaid(event.data.object);
       break;
+
     case "transfer.failed":
       await handleTransferFailed(event.data.object);
       break;
+
     default:
       console.log(`Unhandled event type: ${event.type}`);
   }
@@ -365,7 +512,36 @@ const handleWebhook = expressAsyncHandler(async (req, res) => {
   res.json({ received: true });
 });
 
-// @desc    Handle successful payment
+// @desc    Handle payment intent capturable (funds ready to capture)
+const handlePaymentIntentCapturable = async (paymentIntent) => {
+  console.log(`💰 Payment intent ready for capture: ${paymentIntent.id}`);
+
+  const order = await Order.findOne({
+    stripePaymentIntentId: paymentIntent.id,
+  });
+
+  if (order && order.paymentStatus === "requires_capture") {
+    console.log(`✅ Order ${order._id} funds are authorized and in escrow`);
+  }
+};
+
+// @desc    Handle successful payment capture
+const handleChargeCaptured = async (charge) => {
+  console.log(`💳 Charge captured: ${charge.id}`);
+
+  const order = await Order.findOne({
+    stripePaymentIntentId: charge.payment_intent,
+  });
+
+  if (order && order.paymentStatus !== "captured") {
+    order.paymentStatus = "captured";
+    order.escrowStatus = "released";
+    await order.save();
+    console.log(`✅ Order ${order._id} payment captured successfully`);
+  }
+};
+
+// @desc    Handle payment intent succeeded (when captured)
 const handlePaymentIntentSucceeded = async (paymentIntent) => {
   console.log(`💰 Payment succeeded for: ${paymentIntent.id}`);
 
@@ -378,35 +554,39 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
     return;
   }
 
-  order.paymentStatus = "paid";
-  order.escrowStatus = "locked";
-  order.isPaid = true;
-  order.paidAt = new Date();
-  await order.save();
+  // Skip if already processed
+  if (
+    order.paymentStatus === "captured" ||
+    order.paymentStatus === "refunded"
+  ) {
+    console.log(`⏭️ Order ${order._id} already processed, skipping`);
+    return;
+  }
 
-  for (const item of order.orderItems) {
-    const sellerId = item.seller?._id || item.seller;
-    if (!sellerId) continue;
+  if (paymentIntent.status === "succeeded") {
+    order.paymentStatus = "captured";
+    order.escrowStatus = "released";
+    order.isPaid = true;
+    order.paidAt = new Date();
+    await order.save();
+    console.log(`✅ Order ${order._id} updated to captured`);
+  }
+};
 
-    const wallet = await Wallet.findOne({ user: sellerId });
-    if (wallet) {
-      const amount = item.price * item.quantity;
-      wallet.lockedBalance += amount;
-      wallet.totalEarned += amount;
+// @desc    Handle payment intent canceled
+const handlePaymentIntentCanceled = async (paymentIntent) => {
+  console.log(`❌ Payment intent canceled: ${paymentIntent.id}`);
 
-      await wallet.addTransaction({
-        sender: "buyer",
-        receiver: sellerId.toString(),
-        type: "received",
-        amount: amount,
-        status: "locked",
-        description: `Payment received for order #${order._id.toString().slice(-8)} - held in escrow`,
-        reference: order._id.toString(),
-        stripePaymentIntentId: paymentIntent.id,
-      });
+  const order = await Order.findOne({
+    stripePaymentIntentId: paymentIntent.id,
+  });
 
-      await wallet.save();
-    }
+  if (order && order.paymentStatus !== "refunded") {
+    order.paymentStatus = "refunded";
+    order.escrowStatus = "refunded";
+    order.refundedAt = new Date();
+    await order.save();
+    console.log(`✅ Order ${order._id} marked as refunded due to cancellation`);
   }
 };
 
@@ -421,10 +601,11 @@ const handlePaymentIntentFailed = async (paymentIntent) => {
   if (order) {
     order.paymentStatus = "failed";
     await order.save();
+    console.log(`✅ Order ${order._id} marked as failed`);
   }
 };
 
-// @desc    Handle refund
+// @desc    Handle refund via webhook
 const handleChargeRefunded = async (charge) => {
   console.log(`💰 Charge refunded: ${charge.id}`);
 
@@ -432,41 +613,17 @@ const handleChargeRefunded = async (charge) => {
     stripePaymentIntentId: charge.payment_intent,
   }).populate("orderItems.seller");
 
-  if (!order) return;
+  if (!order) {
+    console.log(`❌ No order found for refund: ${charge.payment_intent}`);
+    return;
+  }
 
-  order.paymentStatus = "refunded";
-  order.refundedAt = new Date();
-  await order.save();
-
-  if (order.escrowStatus === "locked" || order.escrowStatus === "released") {
-    for (const item of order.orderItems) {
-      const sellerId = item.seller?._id || item.seller;
-      if (!sellerId) continue;
-
-      const wallet = await Wallet.findOne({ user: sellerId });
-      if (wallet) {
-        const amount = item.price * item.quantity;
-
-        if (order.escrowStatus === "locked") {
-          wallet.lockedBalance -= amount;
-        } else {
-          wallet.availableBalance -= amount;
-        }
-
-        await wallet.addTransaction({
-          sender: sellerId.toString(),
-          receiver: "buyer",
-          type: "refund",
-          amount: -amount,
-          status: "completed",
-          description: `Refund for order #${order._id.toString().slice(-8)}`,
-          reference: order._id.toString(),
-          stripePaymentIntentId: charge.payment_intent,
-        });
-
-        await wallet.save();
-      }
-    }
+  if (order.paymentStatus !== "refunded") {
+    order.paymentStatus = "refunded";
+    order.escrowStatus = "refunded";
+    order.refundedAt = new Date();
+    await order.save();
+    console.log(`✅ Order ${order._id} marked as refunded via webhook`);
   }
 };
 
@@ -483,7 +640,10 @@ const handleTransferPaid = async (transfer) => {
 
     if (transaction) {
       transaction.status = "completed";
-      wallet.pendingWithdrawal -= Math.abs(transaction.amount);
+      wallet.pendingWithdrawal = Math.max(
+        0,
+        wallet.pendingWithdrawal - Math.abs(transaction.amount),
+      );
       await wallet.save();
       console.log(
         `✅ Transfer ${transfer.id} completed for seller ${sellerId}`,
@@ -509,10 +669,15 @@ const handleTransferFailed = async (transfer) => {
       transaction.metadata.failureReason = transfer.failure_message;
 
       wallet.availableBalance += Math.abs(transaction.amount);
-      wallet.pendingWithdrawal -= Math.abs(transaction.amount);
+      wallet.pendingWithdrawal = Math.max(
+        0,
+        wallet.pendingWithdrawal - Math.abs(transaction.amount),
+      );
 
       await wallet.save();
-      console.log(`❌ Transfer ${transfer.id} failed for seller ${sellerId}`);
+      console.log(
+        `❌ Transfer ${transfer.id} failed for seller ${sellerId}: ${transfer.failure_message}`,
+      );
     }
   }
 };
@@ -530,38 +695,71 @@ const adminReleaseFunds = expressAsyncHandler(async (req, res) => {
     throw new Error("Order not found");
   }
 
-  if (order.escrowStatus !== "locked") {
+  if (order.escrowStatus !== "held") {
     res.status(400);
-    throw new Error("Funds are not in locked escrow state");
+    throw new Error("Funds are not in held escrow state");
   }
 
+  if (order.paymentStatus !== "requires_capture") {
+    res.status(400);
+    throw new Error("Payment is not in escrow state");
+  }
+
+  // Capture the payment
+  try {
+    const capturedPaymentIntent = await stripe.paymentIntents.capture(
+      order.stripePaymentIntentId,
+    );
+
+    if (capturedPaymentIntent.status !== "succeeded") {
+      throw new Error("Payment capture failed");
+    }
+  } catch (stripeError) {
+    console.error("Stripe capture error:", stripeError);
+    res.status(500);
+    throw new Error(`Failed to capture payment: ${stripeError.message}`);
+  }
+
+  order.paymentStatus = "captured";
   order.escrowStatus = "released";
   order.orderStatus = "delivered";
   order.deliveredAt = new Date();
+  order.releasedAt = new Date();
   await order.save();
 
   for (const item of order.orderItems) {
     const sellerId = item.seller?._id || item.seller;
     if (!sellerId) continue;
 
-    const wallet = await Wallet.findOne({ user: sellerId });
-    if (wallet) {
-      const amount = item.price * item.quantity;
-      wallet.lockedBalance -= amount;
-      wallet.availableBalance += amount;
+    let wallet = await Wallet.findOne({ user: sellerId });
 
-      await wallet.addTransaction({
-        sender: "admin",
-        receiver: sellerId.toString(),
-        type: "received",
-        amount: amount,
-        status: "available",
-        description: `Admin force release for order #${order._id.toString().slice(-8)}`,
-        reference: order._id.toString(),
+    if (!wallet) {
+      wallet = await Wallet.create({
+        user: sellerId,
+        role: "seller",
       });
-
-      await wallet.save();
     }
+
+    const amount = item.price * item.quantity;
+    const platformFee = amount * 0.1;
+    const sellerAmount = amount - platformFee;
+
+    wallet.lockedBalance = Math.max(0, wallet.lockedBalance - amount);
+    wallet.availableBalance += sellerAmount;
+    wallet.totalEarned += sellerAmount;
+
+    await addWalletTransaction(wallet, {
+      sender: "admin",
+      receiver: sellerId.toString(),
+      type: "received",
+      amount: sellerAmount,
+      status: "completed",
+      description: `Admin force release for order #${order._id.toString().slice(-8)} (fee: $${platformFee.toFixed(2)})`,
+      reference: order._id.toString(),
+      stripePaymentIntentId: order.stripePaymentIntentId,
+    });
+
+    await wallet.save();
   }
 
   res.json({

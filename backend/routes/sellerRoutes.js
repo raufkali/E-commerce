@@ -12,21 +12,61 @@ router.post(
   verifyRole("seller"),
   async (req, res) => {
     try {
-      const { country = "US" } = req.body; // Default to US if not specified
+      const { country = "US" } = req.body;
       const userId = req.user.id;
 
       // Check if user already has a Stripe account
       const user = await User.findById(userId);
+
       if (user.stripeAccountId) {
-        return res.status(400).json({
-          success: false,
-          message: "Seller already has a Stripe account connected",
-        });
+        // Account exists - check if it's complete or not
+        try {
+          const existingAccount = await stripe.accounts.retrieve(
+            user.stripeAccountId,
+          );
+
+          // Check if onboarding is complete
+          const isOnboarded =
+            existingAccount.charges_enabled &&
+            existingAccount.payouts_enabled &&
+            existingAccount.details_submitted;
+
+          if (isOnboarded) {
+            return res.status(400).json({
+              success: false,
+              message: "Seller already has a verified Stripe account connected",
+            });
+          } else {
+            // Account exists but incomplete - generate a new account link to resume onboarding
+            const accountLink = await stripe.accountLinks.create({
+              account: user.stripeAccountId,
+              refresh_url: `${process.env.FRONTEND_URL1}/seller/onboarding/refresh`,
+              return_url: `${process.env.FRONTEND_URL1}/seller/onboarding/complete`,
+              type: "account_onboarding",
+            });
+
+            return res.json({
+              success: true,
+              message: "Resuming incomplete Stripe account setup",
+              onboardingUrl: accountLink.url,
+              accountId: user.stripeAccountId,
+              isResume: true,
+            });
+          }
+        } catch (stripeError) {
+          console.error("Error retrieving existing account:", stripeError);
+          // If account retrieval fails, create a new one
+          user.stripeAccountId = null;
+          user.stripeAccountStatus = "pending";
+          await user.save();
+
+          // Continue to create new account
+        }
       }
 
-      // Create a Stripe Connect account (Express type for simpler onboarding)
+      // Create a new Stripe Connect account (Express type)
       const account = await stripe.accounts.create({
-        type: "express", // Use "express" for Stripe-hosted onboarding
+        type: "express",
         country: country,
         email: req.user.email,
         capabilities: {
@@ -34,6 +74,14 @@ router.post(
           transfers: { requested: true },
         },
         business_type: "individual",
+        business_profile: {
+          mcc: "5734",
+          url: `${process.env.FRONTEND_URL1}`,
+        },
+        tos_acceptance: {
+          date: Math.floor(Date.now() / 1000),
+          ip: req.ip || "127.0.0.1",
+        },
         metadata: {
           userId: userId.toString(),
         },
@@ -65,6 +113,7 @@ router.post(
         message: "Stripe Connect account created",
         onboardingUrl: accountLink.url,
         accountId: account.id,
+        isResume: false,
       });
     } catch (error) {
       console.error("Error creating Stripe Connect account:", error);
@@ -76,7 +125,7 @@ router.post(
   },
 );
 
-// Handle onboarding completion (called from frontend after return)
+// Handle onboarding completion
 router.get(
   "/onboarding-complete",
   authMiddleware,
@@ -112,6 +161,9 @@ router.get(
           wallet.stripeAccountStatus = "verified";
           await wallet.save();
         }
+      } else {
+        user.stripeAccountStatus = "pending";
+        await user.save();
       }
 
       res.json({
@@ -121,6 +173,7 @@ router.get(
           id: account.id,
           charges_enabled: account.charges_enabled,
           payouts_enabled: account.payouts_enabled,
+          details_submitted: account.details_submitted,
         },
       });
     } catch (error) {
@@ -152,9 +205,15 @@ router.get(
       // Retrieve the account to get current status
       const account = await stripe.accounts.retrieve(user.stripeAccountId);
 
+      const isOnboarded =
+        account.charges_enabled &&
+        account.payouts_enabled &&
+        account.details_submitted;
+
       res.json({
         success: true,
         hasAccount: true,
+        isComplete: isOnboarded,
         status: user.stripeAccountStatus,
         chargesEnabled: account.charges_enabled,
         payoutsEnabled: account.payouts_enabled,
@@ -162,6 +221,46 @@ router.get(
       });
     } catch (error) {
       console.error("Error fetching account status:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  },
+);
+
+// Resume incomplete onboarding
+router.post(
+  "/resume-onboarding",
+  authMiddleware,
+  verifyRole("seller"),
+  async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId);
+
+      if (!user.stripeAccountId) {
+        return res.status(400).json({
+          success: false,
+          message: "No Stripe account found",
+        });
+      }
+
+      // Generate a new account link to resume onboarding
+      const accountLink = await stripe.accountLinks.create({
+        account: user.stripeAccountId,
+        refresh_url: `${process.env.FRONTEND_URL1}/seller/onboarding/refresh`,
+        return_url: `${process.env.FRONTEND_URL1}/seller/onboarding/complete`,
+        type: "account_onboarding",
+      });
+
+      res.json({
+        success: true,
+        onboardingUrl: accountLink.url,
+        accountId: user.stripeAccountId,
+      });
+    } catch (error) {
+      console.error("Error resuming onboarding:", error);
       res.status(500).json({
         success: false,
         message: error.message,
