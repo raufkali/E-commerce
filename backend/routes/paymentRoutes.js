@@ -5,6 +5,7 @@ const {
   createPaymentSession,
   withdrawFunds,
   confirmDelivery,
+  refundProduct,
   refundPayment,
   handleWebhook,
   adminReleaseFunds,
@@ -12,10 +13,10 @@ const {
 
 const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
 
-// ✅ Webhook route - raw body comes from middleware in index.js
+// Webhook route - raw body
 router.post("/webhook", handleWebhook);
 
-// ✅ User routes
+// User routes
 router.post(
   "/create-payment-intent",
   authMiddleware,
@@ -24,16 +25,23 @@ router.post(
 );
 
 router.put(
-  "/confirm-delivery/:orderId",
+  "/confirm-delivery/:orderId/:productId",
   authMiddleware,
   verifyRole("user"),
   confirmDelivery,
 );
 
-// ✅ Seller routes
+router.put(
+  "/refund-product/:orderId/:productId",
+  authMiddleware,
+  verifyRole("user"),
+  refundProduct,
+);
+
+// Seller routes
 router.post("/withdraw", authMiddleware, verifyRole("seller"), withdrawFunds);
 
-// ✅ Admin routes
+// Admin routes
 router.post(
   "/refund/:orderId",
   authMiddleware,

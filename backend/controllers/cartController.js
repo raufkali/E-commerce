@@ -53,7 +53,9 @@ const getMyCart = asyncHandler(async (req, res) => {
     res.status(401);
     throw new Error("User must Login to Continue.");
   }
-  const myCart = await Cart.findOne({ user: req.user.id });
+  const myCart = await Cart.findOne({ user: req.user.id }).populate(
+    "items.product",
+  );
   if (!myCart) {
     res.status(404);
     throw new Error("Cart for this user not Found!");

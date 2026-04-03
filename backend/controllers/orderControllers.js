@@ -5,7 +5,6 @@ const Product = require("../models/Product");
 
 const createOrder = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-
   const { shippingAddress, paymentMethod } = req.body;
 
   // get user cart
@@ -15,9 +14,8 @@ const createOrder = asyncHandler(async (req, res) => {
     throw new Error("Cart is empty");
   }
 
-  // preparing items
-  let orderItems = [];
-  let itemPrice = 0;
+  // Group items by seller to calculate shipping fees
+  const sellerItemsMap = new Map();
 
   for (const item of cart.items) {
     const product = item.product;
@@ -34,29 +32,25 @@ const createOrder = asyncHandler(async (req, res) => {
       );
     }
 
-    // recalculating price
-    const price = product.price;
-    const subtotal = price * item.quantity;
-    itemPrice += subtotal;
-
-    // FIX: Make sure seller is properly set
-    // product.sellerId is the field in your Product model (check your Product schema)
-    const sellerId = product.sellerId || product.seller; // Try both possible field names
-
+    const sellerId = product.sellerId || product.seller;
     if (!sellerId) {
       res.status(400);
       throw new Error(`Product ${product.name} has no seller assigned`);
     }
 
-    const orderStatus = "pending";
-    orderItems.push({
+    if (!sellerItemsMap.has(sellerId.toString())) {
+      sellerItemsMap.set(sellerId.toString(), []);
+    }
+    sellerItemsMap.get(sellerId.toString()).push({
       product: product._id,
-      seller: sellerId, // This is required by your schema
+      seller: sellerId,
       name: product.name,
       image: product.images && product.images[0] ? product.images[0] : null,
-      price,
+      price: product.price,
       quantity: item.quantity,
-      orderStatus,
+      orderStatus: "pending",
+      escrowStatus: "held",
+      shippingFee: 200, // Each seller charges their own shipping fee
     });
 
     // reducing stock
@@ -64,17 +58,35 @@ const createOrder = asyncHandler(async (req, res) => {
     await product.save();
   }
 
-  const shippingPrice = 200;
+  // Build order items with shipping fees per seller
+  let orderItems = [];
+  let totalItemsPrice = 0;
+  let totalShippingPrice = 0;
+
+  for (const [sellerId, items] of sellerItemsMap) {
+    const sellerShippingFee = 200; // Flat rate per seller
+    totalShippingPrice += sellerShippingFee;
+
+    for (const item of items) {
+      const subtotal = item.price * item.quantity;
+      totalItemsPrice += subtotal;
+      orderItems.push({
+        ...item,
+        shippingFee: sellerShippingFee,
+      });
+    }
+  }
+
   const taxPrice = 0;
-  const totalPrice = itemPrice + shippingPrice + taxPrice;
+  const totalPrice = totalItemsPrice + totalShippingPrice + taxPrice;
 
   const order = await Order.create({
     user: userId,
     orderItems,
     shippingAddress,
     paymentMethod,
-    itemsPrice: itemPrice,
-    shippingPrice,
+    itemsPrice: totalItemsPrice,
+    shippingPrice: totalShippingPrice,
     taxPrice,
     totalPrice,
     paymentStatus: "pending",
@@ -93,7 +105,9 @@ const createOrder = asyncHandler(async (req, res) => {
 });
 
 const getMyOrders = asyncHandler(async (req, res) => {
-  const orders = await Order.find({ user: req.user.id });
+  const orders = await Order.find({ user: req.user.id })
+    .populate("orderItems.product")
+    .populate("orderItems.seller", "fullname email");
   res.status(200).json({
     success: true,
     orders,
@@ -121,6 +135,7 @@ const getOrderById = asyncHandler(async (req, res) => {
     order,
   });
 });
+
 const getAllOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find()
     .populate({
@@ -142,6 +157,7 @@ const getAllOrders = asyncHandler(async (req, res) => {
     orders,
   });
 });
+
 const updateOrderStatus = asyncHandler(async (req, res) => {
   const { orderId, productId, orderStatus } = req.body;
 
@@ -150,15 +166,12 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     throw new Error("orderStatus is required");
   }
 
-  // Find order
   const order = await Order.findById(orderId);
-
   if (!order) {
     res.status(404);
     throw new Error("Order not found");
   }
 
-  // Find the specific item
   const item = order.orderItems.find(
     (item) =>
       item.product.toString() === productId &&
@@ -173,13 +186,23 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
   // Update status
   item.orderStatus = orderStatus;
 
+  // If delivered, update escrow status to released
+  if (orderStatus === "delivered") {
+    item.escrowStatus = "released";
+    item.deliveredAt = new Date();
+  }
+
+  // If cancelled, update escrow status to refunded
+  if (orderStatus === "cancelled") {
+    item.escrowStatus = "refunded";
+    item.cancelledAt = new Date();
+  }
+
   await order.save();
 
   res.status(200).json({
     success: true,
-
     message: "Order item status updated",
-
     order,
   });
 });

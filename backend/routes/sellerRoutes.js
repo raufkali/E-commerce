@@ -5,6 +5,15 @@ const { authMiddleware, verifyRole } = require("../middlewares/authMiddleware");
 const User = require("../models/User");
 const Wallet = require("../models/Wallet");
 
+// Helper to check if account is onboarded
+const isAccountOnboarded = (account) => {
+  return (
+    account.charges_enabled &&
+    account.payouts_enabled &&
+    account.details_submitted
+  );
+};
+
 // Create Stripe Connect account for seller and generate onboarding link
 router.post(
   "/create-connect-account",
@@ -25,19 +34,13 @@ router.post(
             user.stripeAccountId,
           );
 
-          // Check if onboarding is complete
-          const isOnboarded =
-            existingAccount.charges_enabled &&
-            existingAccount.payouts_enabled &&
-            existingAccount.details_submitted;
-
-          if (isOnboarded) {
+          if (isAccountOnboarded(existingAccount)) {
             return res.status(400).json({
               success: false,
               message: "Seller already has a verified Stripe account connected",
             });
           } else {
-            // Account exists but incomplete - generate a new account link to resume onboarding
+            // Account exists but incomplete - generate a new account link
             const accountLink = await stripe.accountLinks.create({
               account: user.stripeAccountId,
               refresh_url: `${process.env.FRONTEND_URL1}/seller/onboarding/refresh`,
@@ -55,16 +58,14 @@ router.post(
           }
         } catch (stripeError) {
           console.error("Error retrieving existing account:", stripeError);
-          // If account retrieval fails, create a new one
+          // If account retrieval fails, reset and create a new one
           user.stripeAccountId = null;
           user.stripeAccountStatus = "pending";
           await user.save();
-
-          // Continue to create new account
         }
       }
 
-      // Create a new Stripe Connect account (Express type)
+      // ✅ WORKING VERSION - No business_profile needed for test mode
       const account = await stripe.accounts.create({
         type: "express",
         country: country,
@@ -74,10 +75,6 @@ router.post(
           transfers: { requested: true },
         },
         business_type: "individual",
-        business_profile: {
-          mcc: "5734",
-          url: `${process.env.FRONTEND_URL1}`,
-        },
         tos_acceptance: {
           date: Math.floor(Date.now() / 1000),
           ip: req.ip || "127.0.0.1",
@@ -142,20 +139,13 @@ router.get(
         });
       }
 
-      // Retrieve the account to check its status
       const account = await stripe.accounts.retrieve(user.stripeAccountId);
-
-      // Check if onboarding is complete
-      const isOnboarded =
-        account.charges_enabled &&
-        account.payouts_enabled &&
-        account.details_submitted;
+      const isOnboarded = isAccountOnboarded(account);
 
       if (isOnboarded) {
         user.stripeAccountStatus = "verified";
         await user.save();
 
-        // Update wallet
         const wallet = await Wallet.findOne({ user: userId });
         if (wallet) {
           wallet.stripeAccountStatus = "verified";
@@ -202,13 +192,8 @@ router.get(
         });
       }
 
-      // Retrieve the account to get current status
       const account = await stripe.accounts.retrieve(user.stripeAccountId);
-
-      const isOnboarded =
-        account.charges_enabled &&
-        account.payouts_enabled &&
-        account.details_submitted;
+      const isOnboarded = isAccountOnboarded(account);
 
       res.json({
         success: true,
@@ -246,7 +231,6 @@ router.post(
         });
       }
 
-      // Generate a new account link to resume onboarding
       const accountLink = await stripe.accountLinks.create({
         account: user.stripeAccountId,
         refresh_url: `${process.env.FRONTEND_URL1}/seller/onboarding/refresh`,

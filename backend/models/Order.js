@@ -27,6 +27,17 @@ const orderItemSchema = new mongoose.Schema(
       default: "pending",
     },
     quantity: { type: Number, required: true },
+    escrowStatus: {
+      type: String,
+      enum: ["held", "released", "refunded"],
+      default: "held",
+    },
+    shippingFee: {
+      type: Number,
+      default: 200,
+    },
+    cancelledAt: Date,
+    deliveredAt: Date,
   },
   { _id: false },
 );
@@ -58,54 +69,34 @@ const orderSchema = new mongoose.Schema(
       enum: ["stripe"],
       default: "stripe",
     },
-
-    // STRIPE PAYMENT FIELDS (ADD THESE)
-    stripePaymentIntentId: {
-      type: String,
-      sparse: true, // Allows multiple null values
-    },
-    stripeClientSecret: {
-      type: String,
-    },
-
-    // PAYMENT STATUS - Modified to include Stripe states
+    stripePaymentIntentId: { type: String, sparse: true },
+    stripeClientSecret: { type: String },
     paymentStatus: {
       type: String,
       enum: [
-        "pending", // Order created, no payment yet
-        "requires_payment_method", // Payment failed, retry
-        "requires_capture", // Funds held in escrow (AUTHORIZED)
-        "captured", // Funds released to you (CAPTURED)
-        "paid", // Legacy, kept for compatibility
+        "pending",
+        "requires_payment_method",
+        "requires_capture",
+        "partial_captured",
+        "captured",
+        "paid",
         "failed",
         "refunded",
+        "partial_refunded",
       ],
       default: "pending",
     },
-
-    // ESCROW FIELDS
     escrowStatus: {
       type: String,
-      enum: [
-        "held", // Funds in escrow (authorized)
-        "released", // Funds captured/released to you
-        "refunded", // Funds returned to buyer
-        "disputed",
-      ],
+      enum: ["held", "partial_released", "released", "refunded"],
       default: "held",
     },
-    heldUntil: {
-      type: Date, // Auto-release date (e.g., 14 days after delivery)
-    },
-    releasedAt: Date,
 
-    // Amount fields (already have these)
     itemsPrice: { type: Number, required: true, default: 0 },
     shippingPrice: { type: Number, required: true, default: 0 },
     taxPrice: { type: Number, required: true, default: 0 },
     totalPrice: { type: Number, required: true, default: 0 },
 
-    // Status flags
     isPaid: { type: Boolean, default: false },
     paidAt: Date,
     isDelivered: { type: Boolean, default: false },
@@ -114,5 +105,25 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Method to check if all items are delivered
+orderSchema.methods.allItemsDelivered = function () {
+  return this.orderItems.every((item) => item.orderStatus === "delivered");
+};
+
+// Method to check if any items are in escrow
+orderSchema.methods.hasItemsInEscrow = function () {
+  return this.orderItems.some((item) => item.escrowStatus === "held");
+};
+
+// Method to get total captured amount
+orderSchema.methods.getCapturedAmount = function () {
+  return this.orderItems
+    .filter((item) => item.orderStatus === "delivered")
+    .reduce(
+      (sum, item) => sum + item.price * item.quantity + item.shippingFee,
+      0,
+    );
+};
 
 module.exports = mongoose.model("Order", orderSchema);
