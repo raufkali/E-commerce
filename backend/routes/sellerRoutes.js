@@ -75,10 +75,6 @@ router.post(
           transfers: { requested: true },
         },
         business_type: "individual",
-        tos_acceptance: {
-          date: Math.floor(Date.now() / 1000),
-          ip: req.ip || "127.0.0.1",
-        },
         metadata: {
           userId: userId.toString(),
         },
