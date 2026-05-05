@@ -28,6 +28,7 @@
     "jwt-decode": "^4.0.0",
     "mongoose": "^8.22.0",
     "multer": "^2.1.1",
+    "node-cron": "^4.2.1",
     "nodemailer": "^7.0.10",
     "nodemailer-sendgrid-transport": "^0.2.0",
     "stripe": "^19.3.1",

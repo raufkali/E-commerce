@@ -14,6 +14,9 @@ const orderItemSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     price: { type: Number, required: true },
+    quantity: { type: Number, required: true },
+    shippingFee: { type: Number, default: 0 },
+
     orderStatus: {
       type: String,
       enum: [
@@ -23,19 +26,41 @@ const orderItemSchema = new mongoose.Schema(
         "shipped",
         "delivered",
         "cancelled",
+        "disputed", // ← new: seller rejected refund, awaiting admin
       ],
       default: "pending",
     },
-    quantity: { type: Number, required: true },
+
     escrowStatus: {
       type: String,
       enum: ["held", "released", "refunded"],
       default: "held",
     },
-    shippingFee: {
-      type: Number,
-      default: 200,
+
+    // Auto-release: set when seller marks item as "shipped"
+    // 10 days after shipping → auto-release if buyer hasn't acted
+    autoReleaseAt: { type: Date, default: null },
+
+    // Dispute fields
+    disputeStatus: {
+      type: String,
+      enum: [
+        "none",
+        "open", // buyer opened dispute
+        "approved", // seller approved refund
+        "rejected", // seller rejected, escalated to admin
+        "resolved_refund", // admin ruled: refund buyer
+        "resolved_release", // admin ruled: release to seller
+      ],
+      default: "none",
     },
+    disputeReason: { type: String, default: "" },
+    sellerDisputeNotes: { type: String, default: "" },
+    adminNotes: { type: String, default: "" },
+    disputeOpenedAt: { type: Date },
+    disputeExpiresAt: { type: Date }, // seller must respond within this time
+    disputeResolvedAt: { type: Date },
+
     cancelledAt: Date,
     deliveredAt: Date,
   },
@@ -63,14 +88,17 @@ const orderSchema = new mongoose.Schema(
     },
     orderItems: [orderItemSchema],
     shippingAddress: shippingAddressSchema,
+
     paymentMethod: {
       type: String,
       required: true,
       enum: ["stripe"],
       default: "stripe",
     },
+
     stripePaymentIntentId: { type: String, sparse: true },
     stripeClientSecret: { type: String },
+
     paymentStatus: {
       type: String,
       enum: [
@@ -86,10 +114,24 @@ const orderSchema = new mongoose.Schema(
       ],
       default: "pending",
     },
+
     escrowStatus: {
       type: String,
       enum: ["held", "partial_released", "released", "refunded"],
       default: "held",
+    },
+
+    orderStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "confirmed",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+      ],
+      default: "pending",
     },
 
     itemsPrice: { type: Number, required: true, default: 0 },
@@ -102,26 +144,25 @@ const orderSchema = new mongoose.Schema(
     isDelivered: { type: Boolean, default: false },
     isCancelled: { type: Boolean, default: false },
     deliveredAt: Date,
+    refundedAt: Date,
+    releasedAt: Date,
   },
   { timestamps: true },
 );
 
-// Method to check if all items are delivered
 orderSchema.methods.allItemsDelivered = function () {
   return this.orderItems.every((item) => item.orderStatus === "delivered");
 };
 
-// Method to check if any items are in escrow
 orderSchema.methods.hasItemsInEscrow = function () {
   return this.orderItems.some((item) => item.escrowStatus === "held");
 };
 
-// Method to get total captured amount
 orderSchema.methods.getCapturedAmount = function () {
   return this.orderItems
     .filter((item) => item.orderStatus === "delivered")
     .reduce(
-      (sum, item) => sum + item.price * item.quantity + item.shippingFee,
+      (sum, item) => sum + item.price * item.quantity + (item.shippingFee || 0),
       0,
     );
 };

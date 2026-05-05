@@ -2,6 +2,7 @@ const Order = require("../models/Order");
 const asyncHandler = require("express-async-handler");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const Notification = require("../models/Notification");
 
 const createOrder = asyncHandler(async (req, res) => {
   const userId = req.user.id;
@@ -158,55 +159,164 @@ const getAllOrders = asyncHandler(async (req, res) => {
   });
 });
 
+// PATCH to your existing orderControllers.js
+// Find your updateOrderStatus function and replace it with this version.
+// It sets autoReleaseAt (10 days from now) when the seller marks an item
+// as "shipped", which the auto-release cron job uses.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const notify = async (userId, { title, message, type = "info", link = "" }) => {
+  try {
+    await Notification.create({ user: userId, title, message, type, link });
+  } catch (err) {
+    console.error("Notification error:", err.message);
+  }
+};
+
+// AUTO_RELEASE_DAYS: buyer has this many days after shipping to confirm or dispute
+const AUTO_RELEASE_DAYS = 10;
+
+// @desc  Seller updates the status of their item in an order
+// @route PUT /api/orders/update
+// @access Private (Seller)
 const updateOrderStatus = asyncHandler(async (req, res) => {
   const { orderId, productId, orderStatus } = req.body;
 
-  if (!orderStatus) {
+  const allowedStatuses = [
+    "pending",
+    "confirmed",
+    "processing",
+    "shipped",
+    "cancelled",
+  ];
+
+  if (!allowedStatuses.includes(orderStatus)) {
     res.status(400);
-    throw new Error("orderStatus is required");
+    throw new Error(
+      `Sellers can only set status to: ${allowedStatuses.join(", ")}`,
+    );
   }
 
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(orderId).populate("user");
+
   if (!order) {
     res.status(404);
     throw new Error("Order not found");
   }
 
   const item = order.orderItems.find(
-    (item) =>
-      item.product.toString() === productId &&
-      item.seller.toString() === req.user.id,
+    (i) => (i.product._id || i.product).toString() === productId,
   );
 
   if (!item) {
-    res.status(403);
-    throw new Error("Not authorized to update this product");
+    res.status(404);
+    throw new Error("Product not found in this order");
   }
 
-  // Update status
+  // Verify this seller owns this item
+  if ((item.seller._id || item.seller).toString() !== req.user.id) {
+    res.status(403);
+    throw new Error("Not authorized to update this item");
+  }
+
+  if (item.orderStatus === "delivered" || item.orderStatus === "cancelled") {
+    res.status(400);
+    throw new Error(`Cannot update a ${item.orderStatus} item`);
+  }
+
+  if (item.disputeStatus === "open") {
+    res.status(400);
+    throw new Error("Cannot update status while a dispute is open");
+  }
+
+  // ── Handle cancellation via order update ────────────────────────────────
+  if (orderStatus === "cancelled") {
+    // Delegate to payment controller's refund flow
+    const { refundProduct } = require("./paymentController");
+    // We create a synthetic req/res to reuse the logic
+    // Better: call the internal helper directly
+    const { _processRefundForItem } = require("./paymentController");
+    if (typeof _processRefundForItem === "function") {
+      item.disputeStatus = "approved"; // seller-initiated cancel = auto-approve
+      await _processRefundForItem(order, item);
+
+      await notify(order.user._id.toString(), {
+        title: "Item cancelled by seller",
+        message: `"${item.name}" was cancelled by the seller. A refund will be processed.`,
+        type: "warning",
+        link: "/orders",
+      });
+
+      return res.json({
+        success: true,
+        message: `Item "${item.name}" cancelled and refunded.`,
+      });
+    }
+  }
+
+  const prevStatus = item.orderStatus;
   item.orderStatus = orderStatus;
 
-  // If delivered, update escrow status to released
-  if (orderStatus === "delivered") {
-    item.escrowStatus = "released";
-    item.deliveredAt = new Date();
+  // ── Set auto-release timer when item is shipped ─────────────────────────
+  if (orderStatus === "shipped" && prevStatus !== "shipped") {
+    item.autoReleaseAt = new Date(
+      Date.now() + AUTO_RELEASE_DAYS * 24 * 60 * 60 * 1000,
+    );
+    console.log(`Auto-release set for "${item.name}": ${item.autoReleaseAt}`);
+
+    await notify(order.user._id.toString(), {
+      title: "Your item has shipped!",
+      message: `"${item.name}" is on its way. You have ${AUTO_RELEASE_DAYS} days to confirm delivery or request a refund. Payment will auto-release after ${AUTO_RELEASE_DAYS} days.`,
+      type: "info",
+      link: "/orders",
+    });
   }
 
-  // If cancelled, update escrow status to refunded
-  if (orderStatus === "cancelled") {
-    item.escrowStatus = "refunded";
-    item.cancelledAt = new Date();
+  // Update top-level order status
+  const statuses = order.orderItems.map((i) =>
+    i._id == item._id ? orderStatus : i.orderStatus,
+  );
+
+  if (statuses.every((s) => s === "cancelled")) {
+    order.orderStatus = "cancelled";
+  } else if (
+    statuses.every(
+      (s) => s === "shipped" || s === "delivered" || s === "cancelled",
+    )
+  ) {
+    order.orderStatus = "shipped";
+  } else if (statuses.some((s) => s === "processing")) {
+    order.orderStatus = "processing";
+  } else if (statuses.some((s) => s === "confirmed")) {
+    order.orderStatus = "confirmed";
   }
 
   await order.save();
 
-  res.status(200).json({
+  // Notify buyer of status change (unless shipped — already notified above)
+  if (orderStatus !== "shipped") {
+    const statusMessages = {
+      confirmed: `Your order for "${item.name}" has been confirmed.`,
+      processing: `"${item.name}" is being processed and packed.`,
+    };
+
+    const msg = statusMessages[orderStatus];
+    if (msg) {
+      await notify(order.user._id.toString(), {
+        title: `Order ${orderStatus}`,
+        message: msg,
+        type: "info",
+        link: "/orders",
+      });
+    }
+  }
+
+  res.json({
     success: true,
-    message: "Order item status updated",
-    order,
+    message: `Status updated to ${orderStatus}`,
+    autoReleaseAt: item.autoReleaseAt,
   });
 });
-
 const cancelOrder = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.id);
   if (!order) {
